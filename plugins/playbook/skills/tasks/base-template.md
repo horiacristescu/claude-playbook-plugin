@@ -9,6 +9,8 @@
 ## Status
 pending
 
+> **Before filling this in:** run `tasks work <N>` to activate this task. Hooks won't enforce until activated.
+
 ## Intent
 (what we want to achieve — the outcome, not the activity)
 
