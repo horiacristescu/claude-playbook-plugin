@@ -113,8 +113,6 @@ def main():
 
         # Print the full task file
         print(task_file.read_text().rstrip())
-        print()
-        print("Tip: Use `/playbook` skill for workflow patterns when writing gates.")
 
 
     elif cmd == "new":
@@ -159,8 +157,9 @@ def main():
         print(f"Pattern: {pattern_name}")
         playbook_path = _find_playbook_skill(project_path)
         print(f"Playbook: {playbook_path or '(not found)'}")
-        print("")
+        print()
         print("Next: fill in task.md gates, then ask user to run: tasks work " + task_num)
+        print("Tip: Use `/playbook` skill for workflow patterns when writing gates.")
 
     elif cmd == "init":
         # Target directory: argument or cwd
