@@ -1,0 +1,4 @@
+#!/bin/bash
+# tasks CLI — bundled with plugin, no PATH setup needed
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="$SCRIPT_DIR/lib" exec python3 -m tasks.cli "$@"

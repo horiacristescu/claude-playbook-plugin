@@ -1,0 +1,125 @@
+#!/bin/bash
+# task-gate-hook
+# PreToolUse hook — guards:
+#   0. Write — block creating new task.md files (only tasks new CLI does that)
+#   1. Edit/Write on code files blocked when no task is active (exit 2 = BLOCK)
+#   2-mkdir. Bash — block manual task directory creation
+#
+# Allows: .agent/, .claude/ edits (task management, hook config)
+
+set -e
+
+# Source shared lib (same directory)
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$HOOK_DIR/gate-echo-lib.sh"
+
+# Find project root
+PROJECT_DIR=$(find_project_root)
+if [ -z "$PROJECT_DIR" ]; then
+    cat > /dev/null
+    exit 0
+fi
+
+STATE_FILE="$PROJECT_DIR/.agent/current_state"
+CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
+
+# CLAUDE.md keyword check — warn if task system exists but CLAUDE.md doesn't mention it
+if [ -d "$PROJECT_DIR/.agent/tasks" ] && [ -f "$CLAUDE_MD" ]; then
+    if ! grep -qE 'tasks bootstrap|tasks work' "$CLAUDE_MD" 2>/dev/null; then
+        cat >&2 <<'MSG'
+WARNING: CLAUDE.md doesn't mention the task system. Essential commands:
+  tasks bootstrap          — load context
+  tasks work <N>           — activate task
+  tasks work done          — deactivate
+  tasks new <type> <name>  — create task
+  tasks list               — see all tasks
+MSG
+    fi
+fi
+
+# Read stdin (PreToolUse JSON)
+INPUT=$(cat)
+
+# Extract tool name
+TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
+
+# --- Guard 0: Write — block creating new task.md files (only tasks new CLI does that) ---
+if [ "$TOOL_NAME" = "Write" ]; then
+    FILE_PATH=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
+
+    # Check if it's a task.md in .agent/tasks/ that doesn't exist yet
+    if echo "$FILE_PATH" | grep -qE '\.agent/tasks/[^/]+/task\.md$'; then
+        if [ ! -f "$FILE_PATH" ]; then
+            cat >&2 <<'MSG'
+BLOCKED: Only `tasks new` creates task.md files.
+
+Don't create task files manually. The CLI enforces templates and numbering.
+
+Use:  tasks new <type> <name>
+Types: feature, bugfix, refactor, explore, research, review, decision, test
+MSG
+            exit 2
+        fi
+    fi
+fi
+
+# --- Guard 1: Edit/Write — require active task for code files ---
+if [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
+    FILE_PATH=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
+
+    # Allow .agent/ and .claude/ edits (task management, hook config)
+    case "$FILE_PATH" in
+        */.agent/*|*/.claude/*) exit 0 ;;
+    esac
+
+    # Only block code files
+    case "$FILE_PATH" in
+        *.py|*.ts|*.js|*.tsx|*.jsx|*.sh|*.bash|*.go|*.rs|*.rb|*.java|*.c|*.cpp|*.h) ;;
+        *) exit 0 ;;
+    esac
+
+    # Check for active task
+    if [ -f "$STATE_FILE" ]; then
+        TASK=$(head -1 "$STATE_FILE" | tr -d '[:space:]')
+        if [ -n "$TASK" ]; then
+            exit 0
+        fi
+    fi
+
+    # No active task — block code edit
+    cat >&2 <<'MSG'
+BLOCKED: No active task.
+
+Code edits require an active task so work is tracked and directed.
+
+Workflow:
+  1. tasks new <type> <name>   — create task
+  2. Read /playbook, adapt task.md gates to the requirements
+  3. Ask the user before activating — don't run tasks work <N> on your own
+  4. tasks work <N>            — activate (hook starts tracking gates)
+  5. ... do the work ...
+  6. tasks work done           — deactivate when finished
+
+To resume an existing task:  tasks work <N> (ask user first)
+MSG
+    exit 2
+fi
+
+# --- Guard 2-mkdir: Block manual task directory creation ---
+if [ "$TOOL_NAME" = "Bash" ]; then
+    CMD=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
+
+    if echo "$CMD" | grep -qE 'mkdir.*\.agent/tasks/'; then
+        cat >&2 <<'MSG'
+BLOCKED: Don't create task directories manually.
+
+Use `tasks new <type> <name>` to create tasks. The CLI enforces templates and numbering.
+
+Types: feature, bugfix, refactor, explore, research, review, decision, test
+MSG
+        exit 2
+    fi
+fi
+
+# Everything else — allow
+exit 0

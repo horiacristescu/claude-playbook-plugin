@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-playbook-marketplace",
+  "description": "Workflow enforcement and task management for Claude Code",
+  "owner": {
+    "name": "Horia Cristescu"
+  },
+  "plugins": [
+    {
+      "name": "claude-playbook",
+      "description": "Workflow enforcement hooks, skills, and task management for Claude Code",
+      "version": "1.0.0",
+      "author": {
+        "name": "Horia Cristescu"
+      },
+      "source": "."
+    }
+  ]
+}

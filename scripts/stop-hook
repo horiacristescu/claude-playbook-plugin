@@ -1,0 +1,66 @@
+#!/bin/bash
+# stop-hook
+# Stop hook — prevents agent from finishing when task gates are unchecked.
+#
+# Reads active task's task.md, counts unchecked gates (- [ ]).
+# If any unchecked: exit 2 with message (blocks stopping).
+# If all checked, no active task, or stop_hook_active: exit 0.
+
+set -e
+
+# Source shared lib (same directory)
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$HOOK_DIR/gate-echo-lib.sh"
+
+# Find project root
+PROJECT_DIR=$(find_project_root)
+if [ -z "$PROJECT_DIR" ]; then
+    exit 0
+fi
+
+# Read stdin (Stop JSON) — extract stop_hook_active
+INPUT=$(cat)
+STOP_ACTIVE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('stop_hook_active', False))" 2>/dev/null || echo "False")
+
+# Safety valve: if already blocked once, allow stopping to prevent loops
+if [ "$STOP_ACTIVE" = "True" ]; then
+    exit 0
+fi
+
+STATE_FILE="$PROJECT_DIR/.agent/current_state"
+
+# No active task — allow
+if [ ! -f "$STATE_FILE" ]; then
+    exit 0
+fi
+
+TASK=$(head -1 "$STATE_FILE" | tr -d '[:space:]')
+if [ -z "$TASK" ]; then
+    exit 0
+fi
+
+# Find task file
+TASK_FILE=$(find "$PROJECT_DIR/.agent/tasks" -maxdepth 2 -name "task.md" -path "*/${TASK}-*/*" 2>/dev/null | head -1)
+
+if [ -z "$TASK_FILE" ]; then
+    exit 0
+fi
+
+# Count unchecked gates (only real gates at line start, not inside blockquotes)
+UNCHECKED=$(grep -cE '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null || echo 0)
+
+if [ "$UNCHECKED" -eq 0 ]; then
+    exit 0
+fi
+
+# Find first unchecked gate for the message
+FIRST_GATE=$(grep -m1 -E '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null | sed 's/^[[:space:]]*- \[ \] *//')
+
+cat >&2 <<MSG
+BLOCKED: ${UNCHECKED} unchecked gate(s) in task ${TASK}.
+
+First unchecked: ${FIRST_GATE}
+
+Complete all gates before finishing, or run: tasks work done
+MSG
+exit 2

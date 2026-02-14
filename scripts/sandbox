@@ -1,0 +1,82 @@
+#!/bin/bash
+# bin/sandbox — launch claude with filesystem write containment
+#
+# Usage: bin/sandbox [claude-args...]
+#
+# Wraps `claude` in a seatbelt sandbox (macOS) that confines writes to
+# the project directory. Writes outside the project are blocked at the
+# kernel level. .git/ is read-only even within the project.
+#
+# Same paths, same venv, same node_modules, same claude — no Docker.
+# Must be run from inside a git repository.
+
+set -e
+
+# --- Find project root and .git directory (absolute paths) ---
+GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || {
+    echo "Error: not inside a git repository" >&2
+    exit 1
+}
+GIT_DIR="$(cd "$GIT_DIR" && pwd -P)"
+PROJECT_DIR="$(pwd -P)"
+HOME_DIR="$HOME"
+
+# --- OS detection ---
+case "$(uname -s)" in
+    Darwin)
+        if ! command -v sandbox-exec &>/dev/null; then
+            echo "Error: sandbox-exec not found (required on macOS)" >&2
+            exit 1
+        fi
+
+        # Write containment: deny writes everywhere except project dir + claude paths
+        # Then deny .git writes even within project dir
+        # Note: macOS resolves /var → /private/var, so use /private/var/folders
+        # Note: ~/.claude.json* lives at $HOME root, use regex to match both .claude/ and .claude.json*
+        PROFILE="(version 1)
+(allow default)
+(deny file-write*
+    (require-all
+        (require-not (subpath \"$PROJECT_DIR\"))
+        (require-not (subpath \"/tmp\"))
+        (require-not (subpath \"/private/tmp\"))
+        (require-not (subpath \"/var/folders\"))
+        (require-not (subpath \"/private/var/folders\"))
+        (require-not (regex #\"^$HOME_DIR/\\.claude\"))
+        (require-not (subpath \"$HOME_DIR/.local\"))
+        (require-not (subpath \"$HOME_DIR/Library\"))
+        (require-not (subpath \"/dev\"))
+    )
+)
+(deny file-write* (subpath \"$GIT_DIR\"))"
+
+        echo "Launching claude with write containment (seatbelt)"
+        echo "  project: $PROJECT_DIR (read-write)"
+        echo "  .git:    $GIT_DIR (read-only)"
+        echo "  outside: blocked"
+        echo ""
+        exec sandbox-exec -p "$PROFILE" claude --dangerously-skip-permissions "$@"
+        ;;
+
+    Linux)
+        if command -v bwrap &>/dev/null; then
+            echo "Launching claude with .git protection (bubblewrap)"
+            echo "  .git: $GIT_DIR (read-only)"
+            echo ""
+            exec bwrap \
+                --bind / / \
+                --ro-bind "$GIT_DIR" "$GIT_DIR" \
+                claude "$@"
+        else
+            echo "Error: bubblewrap (bwrap) not found" >&2
+            echo "Install: apt install bubblewrap" >&2
+            exit 1
+        fi
+        ;;
+
+    *)
+        echo "Error: unsupported OS: $(uname -s)" >&2
+        echo "Supported: macOS (seatbelt), Linux (bubblewrap)" >&2
+        exit 1
+        ;;
+esac

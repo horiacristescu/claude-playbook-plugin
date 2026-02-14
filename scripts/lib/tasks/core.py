@@ -1,0 +1,412 @@
+"""Task management operations for .agent/tasks/ directories."""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+
+# Task type → pattern name in playbook skill
+PLAYBOOKS = {
+    "feature": "Build",
+    "bugfix": "Investigate",
+    "refactor": "Build",
+    "explore": "Investigate",
+    "research": "Investigate",
+    "spike": "Investigate",
+    "decision": "Decide",
+    "review": "Evaluate",
+    "commit": "Build",
+    "test": "Evaluate",
+}
+
+
+def _slugify(name: str) -> str:
+    """Convert name to lowercase hyphen-separated slug."""
+    slug = re.sub(r'[\s_]+', '-', name)
+    slug = re.sub(r'[^a-zA-Z0-9-]', '', slug)
+    slug = re.sub(r'-+', '-', slug)
+    return slug.strip('-').lower()
+
+
+def _next_task_number(tasks_dir: Path) -> int:
+    """Find the next available task number."""
+    if not tasks_dir.exists():
+        return 1
+
+    max_num = 0
+    for item in tasks_dir.iterdir():
+        if item.is_dir():
+            match = re.match(r'^(\d+)-', item.name)
+            if match:
+                num = int(match.group(1))
+                max_num = max(max_num, num)
+
+    return max_num + 1
+
+
+def _find_skills_tasks_dir(project_path: Path | None = None) -> Path | None:
+    """Find the skills/tasks/ directory.
+
+    Resolution order:
+    1. project_path/.claude/skills/tasks/  (project-local)
+    2. ~/.claude/skills/tasks/             (home install)
+    """
+    if project_path:
+        skills_dir = project_path / ".claude" / "skills" / "tasks"
+        if skills_dir.exists():
+            return skills_dir
+
+    home_skills = Path.home() / ".claude" / "skills" / "tasks"
+    if home_skills.exists():
+        return home_skills
+
+    return None
+
+
+def _load_base_template(project_path: Path | None = None) -> str:
+    """Load base template from file. Errors if not found."""
+    skills_dir = _find_skills_tasks_dir(project_path)
+    if skills_dir:
+        base_path = skills_dir / "base-template.md"
+        if base_path.exists():
+            return base_path.read_text()
+    raise FileNotFoundError(
+        "base-template.md not found in skills/tasks/. "
+        "Expected at <project>/.claude/skills/tasks/base-template.md or ~/.claude/skills/tasks/base-template.md"
+    )
+
+
+def _find_playbook_skill(project_path: Path | None = None) -> Path | None:
+    """Find the playbook SKILL.md file.
+
+    Resolution order:
+    1. project_path/.claude/skills/playbook/SKILL.md  (project-local)
+    2. ~/.claude/skills/playbook/SKILL.md              (home install)
+    """
+    if project_path:
+        skill = project_path / ".claude" / "skills" / "playbook" / "SKILL.md"
+        if skill.exists():
+            return skill
+
+    home_skill = Path.home() / ".claude" / "skills" / "playbook" / "SKILL.md"
+    if home_skill.exists():
+        return home_skill
+
+    return None
+
+
+def _load_playbook(task_type: str, project_path: Path | None = None) -> str | None:
+    """Load a pattern template from the unified playbook skill.
+
+    Extracts the ```markdown block under the matching ### Pattern heading.
+    Returns the template text, or None if not found.
+    """
+    pattern_name = PLAYBOOKS.get(task_type)
+    if not pattern_name:
+        return None
+
+    skill_path = _find_playbook_skill(project_path)
+    if not skill_path:
+        return None
+
+    content = skill_path.read_text()
+
+    # Extract the ```markdown ... ``` block under ### <pattern_name>
+    in_section = False
+    in_code_block = False
+    template_lines = []
+
+    for line in content.splitlines():
+        if line.strip() == f"### {pattern_name}":
+            in_section = True
+            continue
+        if in_section:
+            # Stop at next ### heading
+            if line.startswith("### ") and not in_code_block:
+                break
+            if line.strip() == "```markdown":
+                in_code_block = True
+                continue
+            if in_code_block:
+                if line.strip() == "```":
+                    break
+                template_lines.append(line)
+
+    return "\n".join(template_lines) if template_lines else None
+
+
+def create_task(project_path: Path, name: str, task_type: str | None = None) -> Path:
+    """Create a new task with the given name.
+
+    Args:
+        project_path: Path to the project root
+        name: Human-readable name for the task
+        task_type: Task type (feature, bugfix, etc.) for playbook template
+
+    Returns:
+        Path to the created task.md file
+    """
+    tasks_dir = project_path / ".agent" / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    task_num = _next_task_number(tasks_dir)
+    slug = _slugify(name)
+    folder_name = f"{task_num:03d}-{slug}"
+
+    task_dir = tasks_dir / folder_name
+    task_dir.mkdir()
+
+    # Build task content
+    pattern_name = PLAYBOOKS.get(task_type) if task_type else None
+    playbook_ref = f"playbook/{pattern_name}" if pattern_name else "(none)"
+
+    template = _load_base_template(project_path)
+    content = template.format(num=task_num, title=name.title(), playbook=playbook_ref)
+
+    # Append playbook template if task_type specified
+    if task_type:
+        role_template = _load_playbook(task_type, project_path)
+        if role_template:
+            content += "\n" + role_template + "\n"
+
+    task_file = task_dir / "task.md"
+    task_file.write_text(content)
+
+    return task_file
+
+
+def _extract_status(task_file: Path) -> str:
+    """Extract status from task file (line after last ## Status)."""
+    try:
+        lines = task_file.read_text().splitlines()
+        status_idx = None
+        for i, line in enumerate(lines):
+            if line.strip() == "## Status":
+                status_idx = i
+        if status_idx is not None and status_idx + 1 < len(lines):
+            return lines[status_idx + 1].strip()
+        return "unknown"
+    except Exception:
+        return "error"
+
+
+def _extract_problem(task_file: Path) -> str:
+    """Extract first line of Problem/Intent section from task file."""
+    try:
+        lines = task_file.read_text().splitlines()
+        in_section = False
+        for line in lines:
+            if line.strip() in ("## Problem", "## Intent"):
+                in_section = True
+                continue
+            if in_section:
+                if not line.strip():
+                    continue
+                if line.startswith("##"):
+                    break
+                text = line.strip()
+                if text.startswith("(") and text.endswith(")"):
+                    text = text[1:-1]
+                return text
+        return ""
+    except Exception:
+        return ""
+
+
+def _extract_head_position(task_file: Path) -> str:
+    """Find the first unchecked checkbox or empty required field."""
+    try:
+        lines = task_file.read_text().splitlines()
+        for line in lines:
+            stripped = line.strip()
+            # Unchecked checkbox
+            if stripped.startswith("- [ ]"):
+                return stripped[6:].strip()  # text after "- [ ] "
+            # Empty required field (line ending with : and nothing after)
+            if stripped.endswith(":") and stripped.startswith("- **"):
+                return stripped
+        return "(all gates checked)"
+    except Exception:
+        return "(error reading)"
+
+
+def _is_done(task_file: Path) -> bool:
+    """Check if a task's status starts with 'done'."""
+    return _extract_status(task_file).startswith("done")
+
+
+def _find_active_task(project_path: Path, name_filter: str = "") -> Path | None:
+    """Find the active task: earliest non-done task with unchecked gates.
+
+    If name_filter is given, only match tasks whose folder name contains it.
+    """
+    tasks_dir = project_path / ".agent" / "tasks"
+    if not tasks_dir.exists():
+        return None
+    for task_file in sorted(tasks_dir.glob("*/task.md")):
+        if name_filter and name_filter not in task_file.parent.name:
+            continue
+        if _is_done(task_file):
+            continue
+        head = _extract_head_position(task_file)
+        if not head.startswith("("):
+            return task_file
+    return None
+
+
+def task_done(project_path: Path, name_filter: str = "") -> dict:
+    """Check off the current gate and return checked + next gate info.
+
+    Returns dict with keys: task_name, checked, next, task_file.
+    On error, returns dict with 'error' key.
+    """
+    task_file = _find_active_task(project_path, name_filter)
+    if not task_file:
+        return {"error": "No active task with open gates"}
+
+    task_name = task_file.parent.name
+    lines = task_file.read_text().splitlines()
+
+    # Find and check off the first unchecked gate
+    checked_text = None
+    checked_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("- [ ]"):
+            checked_text = stripped[6:].strip()
+            # Preserve original indentation, just flip the checkbox
+            lines[i] = line.replace("- [ ]", "- [x]", 1)
+            checked_idx = i
+            break
+
+    if checked_text is None:
+        return {"error": f"No unchecked gate in {task_name}"}
+
+    # Write back
+    task_file.write_text("\n".join(lines) + "\n")
+
+    # Collect next gates (up to 3) after the one we just checked
+    upcoming = []
+    for line in lines[checked_idx + 1:]:
+        stripped = line.strip()
+        if stripped.startswith("- [ ]"):
+            upcoming.append(stripped[6:].strip())
+        elif stripped.endswith(":") and stripped.startswith("- **"):
+            upcoming.append(stripped)
+        else:
+            continue
+        if len(upcoming) >= 3:
+            break
+
+    return {
+        "task_name": task_name,
+        "checked": checked_text,
+        "upcoming": upcoming,
+        "task_file": task_file,
+    }
+
+
+def _extract_progress(task_file: Path) -> str:
+    """Count checked/total checkboxes in a task file."""
+    try:
+        content = task_file.read_text()
+        checked = content.count("- [x]") + content.count("- [X]")
+        total = checked + content.count("- [ ]")
+        return f"{checked}/{total}" if total > 0 else "-"
+    except Exception:
+        return "-"
+
+
+def list_tasks(project_path: Path, pending_only: bool = False) -> None:
+    """List all tasks with their status and intent."""
+    tasks_dir = project_path / ".agent" / "tasks"
+
+    if not tasks_dir.exists():
+        print("No .agent/tasks/ directory found")
+        return
+
+    task_files = sorted(tasks_dir.glob("*/task.md"))
+
+    if not task_files:
+        print("No tasks found")
+        return
+
+    status_w = 7
+    progress_w = 8
+    intent_w = 50
+
+    # Collect rows first to compute dynamic name column width
+    rows = []
+    counts = {"done": 0, "pending": 0, "other": 0}
+
+    for task_file in task_files:
+        name = task_file.parent.name
+        status = _extract_status(task_file)
+        status_key = status.split()[0] if status else "unknown"
+
+        if status_key in ("done", "pending"):
+            counts[status_key] += 1
+        else:
+            counts["other"] += 1
+
+        if pending_only and status_key == "done":
+            continue
+
+        intent = _extract_problem(task_file)
+        progress = _extract_progress(task_file)
+
+        if len(intent) > intent_w:
+            intent = intent[:intent_w-1] + "…"
+        if len(status) > status_w:
+            status = status[:status_w]
+
+        rows.append((name, status, progress, intent))
+
+    name_w = max((len(r[0]) for r in rows), default=4)
+    name_w = max(name_w, 4)  # at least wide enough for "Name"
+
+    print(f"{'Name':<{name_w}} | {'Status':<{status_w}} | {'Progress':<{progress_w}} | Intent")
+    print(f"{'-'*name_w}-+-{'-'*status_w}-+-{'-'*progress_w}-+-{'-'*intent_w}")
+
+    for name, status, progress, intent in rows:
+        print(f"{name:<{name_w}} | {status:<{status_w}} | {progress:<{progress_w}} | {intent}")
+
+    print("")
+    parts = []
+    if counts["done"]:
+        parts.append(f"{counts['done']} done")
+    if counts["pending"]:
+        parts.append(f"{counts['pending']} pending")
+    if counts["other"]:
+        parts.append(f"{counts['other']} other")
+    summary = f"Summary: {', '.join(parts)}"
+    if pending_only:
+        summary += f" (showing {len(rows)} open)"
+    print(summary)
+
+
+def task_status(project_path: Path) -> None:
+    """Show head position (first unchecked gate) for each active task."""
+    tasks_dir = project_path / ".agent" / "tasks"
+
+    if not tasks_dir.exists():
+        print("No .agent/tasks/ directory found")
+        return
+
+    task_files = sorted(tasks_dir.glob("*/task.md"))
+
+    if not task_files:
+        print("No tasks found")
+        return
+
+    for task_file in task_files:
+        name = task_file.parent.name
+        status = _extract_status(task_file)
+
+        if status == "done":
+            continue
+
+        head = _extract_head_position(task_file)
+        progress = _extract_progress(task_file)
+
+        print(f"{name:<40} | {progress:<8} | {head}")

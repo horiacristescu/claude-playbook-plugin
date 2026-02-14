@@ -1,0 +1,161 @@
+#!/bin/bash
+# state-echo-hook
+# PostToolUse hook — shows the current gate from task.md.
+#
+# Reads the active task's task.md, finds first unchecked gate (- [ ]),
+# echoes it with file:line so the agent can follow or edit.
+
+set -e
+
+# Source shared lib (same directory)
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$HOOK_DIR/gate-echo-lib.sh"
+
+# Find project root
+PROJECT_DIR=$(find_project_root)
+if [ -z "$PROJECT_DIR" ]; then
+    echo '{}'
+    exit 0
+fi
+
+STATE_FILE="$PROJECT_DIR/.agent/current_state"
+
+# Read stdin (PostToolUse JSON) — must consume it
+cat > /dev/null
+
+# Read task number
+if [ ! -f "$STATE_FILE" ]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# ⚠ NO ACTIVE TASK — create or activate a task before doing work: tasks new <type> <name> | tasks work <number>"}}'
+    exit 0
+fi
+
+TASK=$(head -1 "$STATE_FILE" | tr -d '[:space:]')
+
+if [ -z "$TASK" ]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# ⚠ NO ACTIVE TASK — create or activate a task before doing work: tasks new <type> <name> | tasks work <number>"}}'
+    exit 0
+fi
+
+# Find task file matching the task number
+TASK_FILE=$(find "$PROJECT_DIR/.agent/tasks" -maxdepth 2 -name "task.md" -path "*/${TASK}-*/*" 2>/dev/null | head -1)
+
+if [ -z "$TASK_FILE" ]; then
+    CONTEXT="# [${TASK}] — task file not found"
+    JSON_CONTEXT=$(python3 -c "import json; print(json.dumps('$CONTEXT'))" 2>/dev/null || echo "\"$CONTEXT\"")
+    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":${JSON_CONTEXT}}}"
+    exit 0
+fi
+
+# Count total and done checkboxes (only [ ], [x], [X] — not [8] reference links)
+TOTAL_GATES=$(grep -cE '^[[:space:]]*- \[( |x|X)\]' "$TASK_FILE" 2>/dev/null) || TOTAL_GATES=0
+DONE_GATES=$(grep -cE '^[[:space:]]*- \[[xX]\]' "$TASK_FILE" 2>/dev/null) || DONE_GATES=0
+
+# Find first unchecked gate (only at line start)
+GATE_LINE=""
+GATE_TEXT=""
+
+while IFS= read -r line; do
+    LINENO_PART="${line%%:*}"
+    CONTENT="${line#*:}"
+    GATE_LINE="$LINENO_PART"
+    GATE_TEXT=$(echo "$CONTENT" | sed 's/^[[:space:]]*- \[ \] *//')
+    break
+done < <(grep -nE '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null)
+
+# Make path relative to project
+REL_PATH="${TASK_FILE#$PROJECT_DIR/}"
+
+# Repetition detection + gate transition logging
+ECHO_COUNT_FILE="$PROJECT_DIR/.agent/.gate_echo_count"
+GATE_LOG="$PROJECT_DIR/.agent/chat_log.md"
+REPEAT_MSG=""
+TRANSITION_MSG=""
+SKIP_MSG=""
+if [ -n "$GATE_LINE" ]; then
+    GATE_KEY="${TASK}:${GATE_LINE}"
+    if [ -f "$ECHO_COUNT_FILE" ]; then
+        PREV_KEY=$(sed -n '1p' "$ECHO_COUNT_FILE")
+        PREV_COUNT=$(sed -n '2p' "$ECHO_COUNT_FILE")
+        PREV_TEXT=$(sed -n '3p' "$ECHO_COUNT_FILE")
+        if [ "$PREV_KEY" = "$GATE_KEY" ]; then
+            NEW_COUNT=$((PREV_COUNT + 1))
+        else
+            # Gate changed — log the completed gate
+            PREV_TASK="${PREV_KEY%%:*}"
+            PREV_LINE="${PREV_KEY##*:}"
+            TRANSITION_MSG="# ✓ previous gate done (${PREV_COUNT} tool calls)"
+            {
+                echo "---"
+                echo ""
+                echo "**[G${PREV_TASK}:${PREV_LINE}]** [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] \`HOST\` (${PREV_COUNT} tool calls)"
+                echo ""
+                echo "- [x] ${PREV_TEXT}"
+                echo ""
+            } >> "$GATE_LOG"
+            # Gate-skip detection: new first-unchecked is above the just-completed gate
+            if [ "$PREV_TASK" = "$TASK" ] && [ "$GATE_LINE" -lt "$PREV_LINE" ] 2>/dev/null; then
+                SKIP_MSG="
+# ⚠ Gate at line ${GATE_LINE} is still open above completed gate at line ${PREV_LINE} — reorder gates in task.md if working out of order."
+            fi
+            # Bare-checkmark detection: compare completed gate text with original
+            BARE_MSG=""
+            if [ -n "$TASK_FILE" ] && [ -n "$PREV_LINE" ]; then
+                COMPLETED_LINE=$(sed -n "${PREV_LINE}p" "$TASK_FILE" 2>/dev/null)
+                COMPLETED_TEXT=$(echo "$COMPLETED_LINE" | sed 's/^[[:space:]]*- \[[xX]\] *//')
+                if [ "$COMPLETED_TEXT" = "$PREV_TEXT" ]; then
+                    BARE_MSG="
+# ⚠ Gate closed with bare checkmark — append your outcome. (line ${PREV_LINE})"
+                fi
+            fi
+            NEW_COUNT=1
+        fi
+    else
+        NEW_COUNT=1
+    fi
+    printf '%s\n%s\n%s\n' "$GATE_KEY" "$NEW_COUNT" "$GATE_TEXT" > "$ECHO_COUNT_FILE"
+    if [ "$NEW_COUNT" -ge 10 ]; then
+        REPEAT_MSG=" (same gate ${NEW_COUNT}x — are you stuck? edit the gate or replan: ${REL_PATH})"
+    fi
+else
+    # All gates done — log final gate if exists, clean up counter
+    if [ -f "$ECHO_COUNT_FILE" ]; then
+        PREV_KEY=$(sed -n '1p' "$ECHO_COUNT_FILE")
+        PREV_COUNT=$(sed -n '2p' "$ECHO_COUNT_FILE")
+        PREV_TEXT=$(sed -n '3p' "$ECHO_COUNT_FILE")
+        PREV_TASK="${PREV_KEY%%:*}"
+        PREV_LINE="${PREV_KEY##*:}"
+        {
+            echo "---"
+            echo ""
+            echo "**[G${PREV_TASK}:${PREV_LINE}]** [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] \`HOST\` (${PREV_COUNT} tool calls)"
+            echo ""
+            echo "- [x] ${PREV_TEXT}"
+            echo ""
+        } >> "$GATE_LOG"
+        rm -f "$ECHO_COUNT_FILE"
+    fi
+fi
+
+if [ -z "$GATE_LINE" ]; then
+    CONTEXT="# [${TASK}] — all gates done. Close this task: tasks work done"
+else
+    CONTEXT="# Working on task [${TASK}] gate (${DONE_GATES}/${TOTAL_GATES}) -> [ ] ${GATE_TEXT}${REPEAT_MSG}
+# Done? Check the box: ${REL_PATH}:${GATE_LINE}"
+fi
+if [ -n "$TRANSITION_MSG" ]; then
+    CONTEXT="${TRANSITION_MSG}
+${CONTEXT}"
+fi
+if [ -n "$SKIP_MSG" ]; then
+    CONTEXT="${CONTEXT}${SKIP_MSG}"
+fi
+if [ -n "$BARE_MSG" ]; then
+    CONTEXT="${CONTEXT}${BARE_MSG}"
+fi
+
+# Format as hook JSON
+JSON_CONTEXT=$(echo "$CONTEXT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().rstrip()))" 2>/dev/null || echo "\"$CONTEXT\"")
+
+cat <<EOF
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":${JSON_CONTEXT}}}
+EOF

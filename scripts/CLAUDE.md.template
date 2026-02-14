@@ -1,0 +1,58 @@
+<!-- PLAYBOOK TEMPLATE
+  This file was installed by the playbook plugin. It contains the universal
+  workflow instructions that every playbook-managed project needs.
+
+  IF THIS FILE IS AT `.claude/templates/CLAUDE.md`:
+    Merge the sections below into the project's root CLAUDE.md.
+    Preserve all existing project-specific content (project description,
+    custom rules, architecture notes). Add or update the sections from
+    this template. If those sections already exist in CLAUDE.md, update
+    them to match this version without duplicating content.
+
+  IF THIS FILE IS AT `CLAUDE.md` (project root):
+    Replace "Project Name" below with the actual project name.
+    Add any project-specific instructions after the template sections.
+-->
+
+# Project Name
+
+## Start Here
+
+```bash
+.claude/scripts/tasks bootstrap          # loads mind map, skills, pending tasks
+```
+
+Then **ask the user** what they want to work on. Don't autonomously pick a task.
+
+## Mind Map
+
+Read `MIND_MAP.md` at project root before starting any work. It's the project's institutional memory — architecture, decisions, history, and reasoning. Consult it before each task, update it after completing one.
+
+## Task Lifecycle
+
+1. `.claude/scripts/tasks new <type> <name>` — creates `.agent/tasks/NNN-name/task.md` from the base template
+2. `.claude/scripts/tasks work <N>` — activates the task, hooks start enforcing
+3. Work through task.md gates: Design Phase (understand, structure, verify) → Work Plan (build/investigate gates) → Pre-review
+4. Check each gate's checkbox as you complete it, appending your observations on the same line
+5. `.claude/scripts/tasks work done` — deactivates the task, sets status to done
+
+The task.md **is** the execution trace. Never skip checkboxes. Never backfill. One gate at a time.
+
+## CLI
+
+```bash
+.claude/scripts/tasks work <number>              # activate task, hook starts tracking
+.claude/scripts/tasks work done                  # deactivate when finished
+.claude/scripts/tasks new <type> <name>          # create task — does NOT activate
+.claude/scripts/tasks list [--pending]           # task overview
+.claude/scripts/tasks status                     # current gate position
+.claude/scripts/tasks bootstrap                  # orientation: mind map + skills + pending
+```
+
+## Don't
+
+- Create task directories manually — always `.claude/scripts/tasks new`
+- Edit `.agent/current_state` — use `.claude/scripts/tasks work <N>` / `.claude/scripts/tasks work done`
+- Edit `## Status` in task.md directly — use `.claude/scripts/tasks work done`
+- Skip task.md checkboxes — they're your observable progress
+- Start coding without an active task — blocked by hook until `.claude/scripts/tasks work <N>`
