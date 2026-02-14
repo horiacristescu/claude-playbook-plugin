@@ -330,4 +330,13 @@ After all work patterns complete, before code becomes permanent:
 
 ---
 
+## Mind Map
+
+Format reference and generation guide for project mind maps (`MIND_MAP.md`).
+
+- **Format:** Node structure, hierarchy, link principles, templates — [`mindmap.md`](mindmap.md)
+- **Generation:** Codebase analysis → populated mind map in three phases — [`mindmap-gen.md`](mindmap-gen.md)
+
+---
+
 > Evidence base: patterns and anti-patterns derived from 14 tasks across 2 projects. Details: `.agent/tasks/084-workflow-pattern-analysis/findings.md`
