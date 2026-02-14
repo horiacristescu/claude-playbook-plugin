@@ -13,7 +13,7 @@
       "author": {
         "name": "Horia Cristescu"
       },
-      "source": "."
+      "source": "./plugins/claude-playbook"
     }
   ]
 }
