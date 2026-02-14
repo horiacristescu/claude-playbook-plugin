@@ -113,6 +113,8 @@ def main():
 
         # Print the full task file
         print(task_file.read_text().rstrip())
+        print()
+        print("Tip: Use `/playbook` skill for workflow patterns when writing gates.")
 
 
     elif cmd == "new":
@@ -229,10 +231,20 @@ tasks bootstrap                  # orientation: mind map + skills + pending
         project_path = find_project_root()
         home = Path.home()
 
-        # Environment info
-        print("=== ENVIRONMENT ===")
-        print("- Edit files with an active task (tasks work <N>)")
-        print("- Use CC native sandbox for code execution")
+        # Workflow briefing — the rules agents need to work correctly
+        print("=== WORKFLOW ===")
+        print("- Task numbers are zero-padded: 001, 012, 020 (not 1, 12, 20)")
+        print("- Always `tasks work <N>` before editing task.md — hooks enforce this")
+        print("- Never edit `## Status` directly — use `tasks work done`")
+        print("- One gate at a time: read gate → do work → check box → next gate")
+        print("- Pattern templates in task.md ARE the work plan — fill them in, don't skip")
+        print()
+        print("Tasks CLI:")
+        print("  tasks work <N>           activate task (start here)")
+        print("  tasks work done          mark done + deactivate")
+        print("  tasks new <type> <name>  create task (doesn't activate)")
+        print("  tasks list [--pending]   show tasks")
+        print("  tasks status             current gate position")
         print()
 
         # Mind Map - institutional memory for agents
@@ -250,16 +262,6 @@ tasks bootstrap                  # orientation: mind map + skills + pending
                 truncated = len(content) - max_chars
                 print(f"\n... ({truncated} chars truncated)")
             print()
-
-        # Core skills (project-local first, then home)
-        for skill_name in ("playbook",):
-            skill_file = project_path / ".claude" / "skills" / skill_name / "SKILL.md"
-            if not skill_file.exists():
-                skill_file = home / ".claude" / "skills" / skill_name / "SKILL.md"
-            if skill_file.exists():
-                print(f"=== {skill_name.upper()} SKILL ===")
-                print(skill_file.read_text().rstrip())
-                print()
 
         # Pending tasks
         print("=== PENDING TASKS ===")
