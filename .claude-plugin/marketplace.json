@@ -7,13 +7,13 @@
   },
   "plugins": [
     {
-      "name": "claude-playbook",
+      "name": "playbook",
       "description": "Workflow enforcement hooks, skills, and task management for Claude Code",
       "version": "1.0.0",
       "author": {
         "name": "Horia Cristescu"
       },
-      "source": "./plugins/claude-playbook"
+      "source": "./plugins/playbook"
     }
   ]
 }
