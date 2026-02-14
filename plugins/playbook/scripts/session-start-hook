@@ -1,0 +1,28 @@
+#!/bin/bash
+# session-start-hook
+# SessionStart hook — persists session_id as PLAYBOOK_SESSION_ID env var.
+#
+# Uses CLAUDE_ENV_FILE to make the env var available in all subsequent
+# Bash commands for the session. This enables per-session task state:
+# each agent gets its own .agent/current_state.<session_id> file.
+#
+# Note: CLAUDE_ENV_FILE doesn't work in VSCode extension (as of Feb 2026).
+# The PreToolUse hook (task-gate-hook) injects the env var via updatedInput
+# as a fallback. This hook is kept for when CLAUDE_ENV_FILE works (CLI).
+
+set -e
+
+# Parse session_id from stdin JSON
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null)
+
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+# Write to CLAUDE_ENV_FILE so it persists for all Bash calls this session
+if [ -n "$CLAUDE_ENV_FILE" ]; then
+    echo "export PLAYBOOK_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE"
+fi
+
+exit 0

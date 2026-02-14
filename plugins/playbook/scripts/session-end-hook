@@ -1,0 +1,33 @@
+#!/bin/bash
+# session-end-hook
+# SessionEnd hook — cleans up per-session state file.
+#
+# Parses session_id from stdin JSON, deletes .agent/current_state.<session_id>.
+
+set -e
+
+# Source shared lib (same directory)
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$HOOK_DIR/gate-echo-lib.sh"
+
+# Find project root
+PROJECT_DIR=$(find_project_root)
+if [ -z "$PROJECT_DIR" ]; then
+    exit 0
+fi
+
+# Read stdin (SessionEnd JSON) — extract session_id
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
+
+if [ -z "$SESSION_ID" ]; then
+    exit 0
+fi
+
+# Delete per-session state file if it exists
+STATE_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
+if [ -f "$STATE_FILE" ]; then
+    rm -f "$STATE_FILE"
+fi
+
+exit 0

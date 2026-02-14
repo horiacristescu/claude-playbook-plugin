@@ -1,9 +1,20 @@
 """CLI entry point for standalone tasks management."""
 from __future__ import annotations
 
+import os
 import sys
+import time
 from pathlib import Path
 from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_playbook_skill
+
+
+def _state_file(project_path: Path) -> Path:
+    """Return per-session state file if PLAYBOOK_SESSION_ID is set, else legacy."""
+    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
+    agent_dir = project_path / ".agent"
+    if session_id:
+        return agent_dir / f"current_state.{session_id}"
+    return agent_dir / "current_state"
 
 
 def find_project_root() -> Path:
@@ -63,7 +74,7 @@ def main():
 
         # Handle 'tasks work done' - deactivate current task and set Status in task.md
         if task_num == "done":
-            state_file = project_path / ".agent" / "current_state"
+            state_file = _state_file(project_path)
             if state_file.exists():
                 prev_task = state_file.read_text().strip()
                 # Set ## Status to done in task.md
@@ -106,10 +117,20 @@ def main():
                 print(f"Task {task_num} not found", file=sys.stderr)
             sys.exit(1)
 
-        # Write task number to current_state
-        state_file = project_path / ".agent" / "current_state"
+        # Write task number to current_state (per-session if PLAYBOOK_SESSION_ID set)
+        state_file = _state_file(project_path)
         state_file.parent.mkdir(parents=True, exist_ok=True)
         state_file.write_text(f"{task_num}\n")
+
+        # Clean up stale per-session state files older than 24h
+        agent_dir = project_path / ".agent"
+        cutoff = time.time() - 86400
+        for f in agent_dir.glob("current_state.*"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+            except OSError:
+                pass
 
         # Print the full task file
         print(task_file.read_text().rstrip())

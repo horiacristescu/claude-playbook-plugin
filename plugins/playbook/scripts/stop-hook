@@ -18,9 +18,10 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
-# Read stdin (Stop JSON) — extract stop_hook_active
+# Read stdin (Stop JSON) — extract stop_hook_active and session_id
 INPUT=$(cat)
 STOP_ACTIVE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('stop_hook_active', False))" 2>/dev/null || echo "False")
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
 
 # Safety valve: if already blocked once, allow stopping to prevent loops
 if [ "$STOP_ACTIVE" = "True" ]; then
@@ -28,6 +29,14 @@ if [ "$STOP_ACTIVE" = "True" ]; then
 fi
 
 STATE_FILE="$PROJECT_DIR/.agent/current_state"
+
+# Use per-session state file if available
+if [ -n "$SESSION_ID" ]; then
+    PER_SESSION_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
+    if [ -f "$PER_SESSION_FILE" ]; then
+        STATE_FILE="$PER_SESSION_FILE"
+    fi
+fi
 
 # No active task — allow
 if [ ! -f "$STATE_FILE" ]; then

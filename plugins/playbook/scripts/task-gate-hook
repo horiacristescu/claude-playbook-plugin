@@ -20,6 +20,7 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+# Default state file (legacy); overridden below if session_id available
 STATE_FILE="$PROJECT_DIR/.agent/current_state"
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 
@@ -40,8 +41,18 @@ fi
 # Read stdin (PreToolUse JSON)
 INPUT=$(cat)
 
-# Extract tool name
+# Extract session_id and tool name
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || echo "")
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
+
+# Use per-session state file if session_id available
+if [ -n "$SESSION_ID" ]; then
+    PER_SESSION_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
+    if [ -f "$PER_SESSION_FILE" ]; then
+        STATE_FILE="$PER_SESSION_FILE"
+    fi
+    # else fall back to legacy STATE_FILE
+fi
 
 # --- Guard 0: Write — block creating new task.md files (only tasks new CLI does that) ---
 if [ "$TOOL_NAME" = "Write" ]; then
@@ -105,9 +116,19 @@ MSG
     exit 2
 fi
 
-# --- Guard 2-mkdir: Block manual task directory creation ---
+# --- Guard 2: Bash — inject session_id + block manual task dir creation ---
 if [ "$TOOL_NAME" = "Bash" ]; then
     CMD=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
+
+    # Inject PLAYBOOK_SESSION_ID into tasks CLI commands via updatedInput
+    if [ -n "$SESSION_ID" ] && echo "$CMD" | grep -qE '(^|[;&|] *)(([^ ]*/)?)tasks (work|status|bootstrap)'; then
+        UPDATED_CMD="PLAYBOOK_SESSION_ID=$SESSION_ID $CMD"
+        JSON_CMD=$(echo "$UPDATED_CMD" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().rstrip()))" 2>/dev/null)
+        cat <<EOFX
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":${JSON_CMD}}}}
+EOFX
+        exit 0
+    fi
 
     if echo "$CMD" | grep -qE 'mkdir.*\.agent/tasks/'; then
         cat >&2 <<'MSG'

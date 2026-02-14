@@ -20,8 +20,17 @@ fi
 
 STATE_FILE="$PROJECT_DIR/.agent/current_state"
 
-# Read stdin (PostToolUse JSON) — must consume it
-cat > /dev/null
+# Read stdin (PostToolUse JSON) — parse session_id for per-session state
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
+
+# Use per-session state file if available
+if [ -n "$SESSION_ID" ]; then
+    PER_SESSION_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
+    if [ -f "$PER_SESSION_FILE" ]; then
+        STATE_FILE="$PER_SESSION_FILE"
+    fi
+fi
 
 # Read task number
 if [ ! -f "$STATE_FILE" ]; then
