@@ -40,7 +40,22 @@ Then `chmod +x .claude/scripts/tasks`.
 
 If the wrapper already exists, check if it delegates to the plugin. If it's a different script (e.g., from a manual install), leave it alone.
 
-### 2. Create or update CLAUDE.md
+### 2. Set permissions in `.claude/settings.json`
+
+Ensure `permissions.deny` includes `"TodoWrite"` and `"Task"`. These tools conflict with the gate-based workflow (TodoWrite doubles overhead, Task blocks user steering).
+
+**If `.claude/settings.json` does not exist:** Create it with:
+```json
+{
+  "permissions": {
+    "deny": ["TodoWrite", "Task"]
+  }
+}
+```
+
+**If it already exists:** Read it. If `permissions.deny` is missing, add it. If it exists, merge — add `"TodoWrite"` and `"Task"` if not already present. Preserve all other settings (hooks, allow lists, etc.).
+
+### 3. Create or update CLAUDE.md
 
 Read the template from the plugin: find the file matching `**/playbook/scripts/CLAUDE.md.template` inside `~/.claude/plugins/`.
 
@@ -48,7 +63,7 @@ Read the template from the plugin: find the file matching `**/playbook/scripts/C
 
 **If CLAUDE.md already exists:** Read both files. The template has sections marked with `<!-- PLAYBOOK TEMPLATE -->` comments. Follow the merge instructions in the template header: update playbook sections to match the template, preserve all project-specific content. Don't duplicate sections that already match.
 
-### 3. Create MIND_MAP.md if missing
+### 4. Create MIND_MAP.md if missing
 
 If `MIND_MAP.md` does not exist at project root, create it with this scaffold:
 
@@ -70,7 +85,7 @@ If `MIND_MAP.md` does not exist at project root, create it with this scaffold:
 
 If it already exists, **do not modify it**.
 
-### 4. Create .agent/ directory if missing
+### 5. Create .agent/ directory if missing
 
 ```bash
 mkdir -p .agent/tasks
@@ -78,6 +93,6 @@ mkdir -p .agent/tasks
 
 If `.agent/` already exists, leave it alone.
 
-### 5. Verify
+### 6. Verify
 
 Run `.claude/scripts/tasks bootstrap` to verify everything works. Report what was created or updated.

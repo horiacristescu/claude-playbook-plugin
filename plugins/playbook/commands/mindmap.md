@@ -1,16 +1,16 @@
 ---
 description: Generate a mind map by analyzing the current codebase
-allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, Task]
+allowed-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
-Generate a populated `MIND_MAP.md` for this project by following the mind map generation process.
+Generate a populated `MIND_MAP.md` for this project. Work directly — no Task agents — so the user can steer between steps.
 
 ## Process
 
-1. **Propose an outline first** — list planned node IDs and titles. Wait for user approval before writing.
-2. **Follow the three phases** from the `mindmap-gen.md` skill: scan codebase, mine git history, construct map.
-3. **Use the format** from the `mindmap.md` skill: single-line nodes, natural linking, routing nodes [1-5].
-4. **Write to `MIND_MAP.md`** in the project root. If one exists, replace the scaffold content but preserve any existing populated nodes.
+1. **Scan codebase:** Read READMEs, configs, entry points. Map directories, tech stack, architecture, data flow.
+2. **Mine git history:** Commit timeline, development phases, major milestones.
+3. **Construct map:** Plan node hierarchy, write nodes, weave links. Use the format from the `mindmap.md` skill.
+4. **Write to `MIND_MAP.md`** in the project root. If one exists, replace scaffold content but preserve any existing populated nodes.
 
 ## Key Rules
 
