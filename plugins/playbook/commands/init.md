@@ -12,7 +12,7 @@ Initialize this project for playbook-managed workflow. Safe to re-run (idempoten
 
 ## Instructions
 
-Perform these steps in order. Skip any step where the artifact already exists and is up-to-date.
+Perform **every** step in order. Some steps create files, others merge into existing files — read each step fully before deciding what to do.
 
 ### 1. Create `.claude/scripts/tasks` wrapper
 
@@ -42,18 +42,22 @@ If the wrapper already exists, check if it delegates to the plugin. If it's a di
 
 ### 2. Set permissions in `.claude/settings.json`
 
-Ensure `permissions.deny` includes `"TodoWrite"` and `"Task"`. These tools conflict with the gate-based workflow (TodoWrite doubles overhead, Task blocks user steering).
+**This step always requires action — even if the file exists.** The file existing does NOT mean permissions are set.
 
-**If `.claude/settings.json` does not exist:** Create it with:
+Read `.claude/settings.json` (or note that it doesn't exist). Then ensure it contains:
 ```json
-{
-  "permissions": {
-    "deny": ["TodoWrite", "Task"]
-  }
-}
+"permissions": { "deny": ["TodoWrite", "Task"] }
 ```
 
-**If it already exists:** Read it. If `permissions.deny` is missing, add it. If it exists, merge — add `"TodoWrite"` and `"Task"` if not already present. Preserve all other settings (hooks, allow lists, etc.).
+These tools conflict with the gate-based workflow (TodoWrite doubles overhead, Task blocks user steering).
+
+**If the file does not exist:** Create it with `{ "permissions": { "deny": ["TodoWrite", "Task"] } }`.
+
+**If the file exists but has no `permissions` key:** Add the `permissions` block. Keep all existing content (plugins, hooks, etc.).
+
+**If `permissions` exists but `deny` is missing or incomplete:** Add/merge so `deny` includes both `"TodoWrite"` and `"Task"`.
+
+**If `permissions.deny` already contains both:** No action needed — this is the only case where you skip this step.
 
 ### 3. Create or update CLAUDE.md
 
