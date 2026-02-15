@@ -185,6 +185,102 @@ def standing_orders() -> str:
 
 
 # ---------------------------------------------------------------------------
+# CLAUDE.md init template
+# ---------------------------------------------------------------------------
+
+def claude_md(title: str) -> str:
+    """Generate CLAUDE.md content for `tasks init`."""
+    return f"""\
+# {title}
+
+## Start Here
+
+```bash
+tasks bootstrap          # loads mind map, skills, pending tasks
+```
+
+Then **ask the user** what they want to work on. Don't autonomously pick a task.
+
+## CLI
+
+```bash
+tasks work <number>              # activate task, hook starts tracking
+tasks work done                  # deactivate when finished
+tasks new <type> <name>          # create task — does NOT activate
+tasks list [--pending]           # task overview
+tasks status                     # current gate position
+tasks bootstrap                  # orientation: mind map + skills + pending
+```
+
+## Don't
+
+- Create task directories manually — always `tasks new`
+- Edit `.agent/current_state` — use `tasks work <N>` / `tasks work done`
+- Edit `## Status` in task.md directly — use `tasks work done`
+- Skip task.md checkboxes — they're your observable progress
+- Start coding without an active task — blocked by hook until `tasks work <N>`
+"""
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap briefing
+# ---------------------------------------------------------------------------
+
+def workflow_briefing() -> str:
+    """Workflow rules shown at bootstrap."""
+    return """\
+- Task numbers are zero-padded: 001, 012, 020 (not 1, 12, 20)
+- Always `tasks work <N>` before editing task.md — hooks enforce this
+- Never edit `## Status` directly — use `tasks work done`
+- One gate at a time: read gate → do work → check box → next gate
+- Pattern templates in task.md ARE the work plan — fill them in, don't skip"""
+
+
+def cli_reference() -> str:
+    """CLI quick reference shown at bootstrap."""
+    return """\
+Tasks CLI:
+  tasks work <N>           activate task (start here)
+  tasks work done          mark done + deactivate
+  tasks new <type> <name>  create task (doesn't activate)
+  tasks list [--pending]   show tasks
+  tasks status             current gate position"""
+
+
+def autonomy_nudge() -> str:
+    """Nudge shown after bootstrap to prevent autonomous task selection."""
+    return """\
+IMPORTANT: Don't autonomously start tasks. Ask the user what to work on.
+  User tells you: tasks work <N> | tasks new <type> <name> | or just chat"""
+
+
+# ---------------------------------------------------------------------------
+# CLI usage
+# ---------------------------------------------------------------------------
+
+def usage_text() -> str:
+    """Usage text for `tasks --help`."""
+    types = ", ".join(sorted(PLAYBOOKS.keys()))
+    return f"""\
+Usage: tasks <command> [args]
+
+Commands:
+  init                Create CLAUDE.md for this project
+  bootstrap           Load mind map + skills + pending tasks
+  work <number>       Set active task (e.g. tasks work 058)
+  new <type> <name>   Create task with playbook template
+  list [--pending]    List all tasks with status
+  status              Show head position for active tasks
+
+Task types: {types}
+
+Examples:
+  tasks work 058
+  tasks new feature add-auth
+  tasks list --pending"""
+
+
+# ---------------------------------------------------------------------------
 # Composition
 # ---------------------------------------------------------------------------
 

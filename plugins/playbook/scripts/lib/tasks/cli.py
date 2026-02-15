@@ -35,22 +35,8 @@ def find_project_root() -> Path:
 
 
 def print_usage():
-    print("Usage: tasks <command> [args]")
-    print("")
-    print("Commands:")
-    print("  init                Create CLAUDE.md for this project")
-    print("  bootstrap           Load mind map + skills + pending tasks")
-    print("  work <number>       Set active task (e.g. tasks work 058)")
-    print("  new <type> <name>   Create task with playbook template")
-    print("  list [--pending]    List all tasks with status")
-    print("  status              Show head position for active tasks")
-    print("")
-    print("Task types:", ", ".join(sorted(PLAYBOOKS.keys())))
-    print("")
-    print("Examples:")
-    print("  tasks work 058")
-    print("  tasks new feature add-auth")
-    print("  tasks list --pending")
+    from tasks.template import usage_text
+    print(usage_text())
 
 
 def main():
@@ -214,35 +200,8 @@ def main():
         # Create CLAUDE.md
         claude_md = target / "CLAUDE.md"
         if not claude_md.exists():
-            claude_md.write_text(f"""# {title}
-
-## Start Here
-
-```bash
-tasks bootstrap          # loads mind map, skills, pending tasks
-```
-
-Then **ask the user** what they want to work on. Don't autonomously pick a task.
-
-## CLI
-
-```bash
-tasks work <number>              # activate task, hook starts tracking
-tasks work done                  # deactivate when finished
-tasks new <type> <name>          # create task — does NOT activate
-tasks list [--pending]           # task overview
-tasks status                     # current gate position
-tasks bootstrap                  # orientation: mind map + skills + pending
-```
-
-## Don't
-
-- Create task directories manually — always `tasks new`
-- Edit `.agent/current_state` — use `tasks work <N>` / `tasks work done`
-- Edit `## Status` in task.md directly — use `tasks work done`
-- Skip task.md checkboxes — they're your observable progress
-- Start coding without an active task — blocked by hook until `tasks work <N>`
-""")
+            from tasks.template import claude_md as claude_md_template
+            claude_md.write_text(claude_md_template(title))
             print("  CLAUDE.md      created")
         else:
             print("  CLAUDE.md      exists")
@@ -252,19 +211,11 @@ tasks bootstrap                  # orientation: mind map + skills + pending
         home = Path.home()
 
         # Workflow briefing — the rules agents need to work correctly
+        from tasks.template import workflow_briefing, cli_reference, autonomy_nudge
         print("=== WORKFLOW ===")
-        print("- Task numbers are zero-padded: 001, 012, 020 (not 1, 12, 20)")
-        print("- Always `tasks work <N>` before editing task.md — hooks enforce this")
-        print("- Never edit `## Status` directly — use `tasks work done`")
-        print("- One gate at a time: read gate → do work → check box → next gate")
-        print("- Pattern templates in task.md ARE the work plan — fill them in, don't skip")
+        print(workflow_briefing())
         print()
-        print("Tasks CLI:")
-        print("  tasks work <N>           activate task (start here)")
-        print("  tasks work done          mark done + deactivate")
-        print("  tasks new <type> <name>  create task (doesn't activate)")
-        print("  tasks list [--pending]   show tasks")
-        print("  tasks status             current gate position")
+        print(cli_reference())
         print()
 
         # Mind Map - institutional memory for agents
@@ -289,8 +240,7 @@ tasks bootstrap                  # orientation: mind map + skills + pending
 
         # Next steps
         print()
-        print("IMPORTANT: Don't autonomously start tasks. Ask the user what to work on.")
-        print("  User tells you: tasks work <N> | tasks new <type> <name> | or just chat")
+        print(autonomy_nudge())
 
     elif cmd in ("list", "ls"):
         project_path = find_project_root()

@@ -44,37 +44,6 @@ def _next_task_number(tasks_dir: Path) -> int:
     return max_num + 1
 
 
-def _find_skills_tasks_dir(project_path: Path | None = None) -> Path | None:
-    """Find the skills/tasks/ directory.
-
-    Resolution order:
-    1. project_path/.claude/skills/tasks/  (project-local)
-    2. ~/.claude/skills/tasks/             (home install)
-    """
-    if project_path:
-        skills_dir = project_path / ".claude" / "skills" / "tasks"
-        if skills_dir.exists():
-            return skills_dir
-
-    home_skills = Path.home() / ".claude" / "skills" / "tasks"
-    if home_skills.exists():
-        return home_skills
-
-    return None
-
-
-def _load_base_template(project_path: Path | None = None) -> str:
-    """Load base template from file. Errors if not found."""
-    skills_dir = _find_skills_tasks_dir(project_path)
-    if skills_dir:
-        base_path = skills_dir / "base-template.md"
-        if base_path.exists():
-            return base_path.read_text()
-    raise FileNotFoundError(
-        "base-template.md not found in skills/tasks/. "
-        "Expected at <project>/.claude/skills/tasks/base-template.md or ~/.claude/skills/tasks/base-template.md"
-    )
-
 
 def _find_playbook_skill(project_path: Path | None = None) -> Path | None:
     """Find the playbook SKILL.md file.
