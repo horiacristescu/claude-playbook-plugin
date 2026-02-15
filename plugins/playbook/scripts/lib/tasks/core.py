@@ -157,11 +157,8 @@ def create_task(project_path: Path, name: str, task_type: str | None = None) -> 
     task_dir.mkdir()
 
     # Build task content
-    pattern_name = PLAYBOOKS.get(task_type) if task_type else None
-    playbook_ref = f"playbook/{pattern_name}" if pattern_name else "(none)"
-
-    template = _load_base_template(project_path)
-    content = template.format(num=task_num, title=name.title(), playbook=playbook_ref)
+    from tasks.template import render_template
+    content = render_template(num=task_num, title=name.title(), task_type=task_type)
 
     # Append playbook template if task_type specified
     if task_type:
