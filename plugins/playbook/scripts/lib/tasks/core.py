@@ -299,7 +299,7 @@ def list_tasks(project_path: Path, pending_only: bool = False) -> None:
 
     status_w = 7
     progress_w = 8
-    intent_w = 50
+    intent_w = 500
 
     # Collect rows first to compute dynamic name column width
     rows = []
@@ -349,6 +349,7 @@ def list_tasks(project_path: Path, pending_only: bool = False) -> None:
     if pending_only:
         summary += f" (showing {len(rows)} open)"
     print(summary)
+    print("Task files: .agent/tasks/<name>/task.md — activate with: tasks work <number>")
 
 
 def task_status(project_path: Path) -> None:

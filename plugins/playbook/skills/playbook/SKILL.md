@@ -38,7 +38,10 @@ Use it at task start, not just when struggling.
 - [ ] Checkpoint: What did I just learn that I didn't expect? Is the approach working? Scope check: has scope changed from the original Intent? Continue, replan, or split?
 ```
 The question "what didn't I expect?" is more generative than "is this working?"
-It forces noticing, not just confirming.
+It forces noticing, not just confirming. **Investigation checkpoints must include
+a concrete example** — "Given input X, parse returns Y with structure Z" — not
+just "I understand the interface." Run-007 said "I understand parse()" then got
+the data model wrong. A concrete example would have caught it.
 
 **Replan** (when reality diverges from the plan):
 ```

@@ -176,6 +176,29 @@ def parked() -> str:
 ---"""
 
 
+def judge_prompt(task_path: str) -> str:
+    """Return the blind judge prompt for plan review.
+
+    Args:
+        task_path: Relative path to the task.md file (e.g. .agent/tasks/001-foo/task.md)
+    """
+    return (
+        "You are a senior engineer reviewing a PLAN — no code has been written yet. "
+        "The MIND_MAP.md and task.md are provided in your system prompt. "
+        "Read the source files referenced in the plan to understand existing patterns. "
+        "Then critique the plan: "
+        "(1) Will this approach actually fulfill the stated Intent? "
+        "(2) What's missing or underspecified? "
+        "(3) What will go wrong that isn't addressed? "
+        "(4) Is anything over-engineered? "
+        "Be specific and adversarial — your job is to find problems, not approve. "
+        "Output numbered findings with severity (Critical/Important/Minor). "
+        f"Then edit {task_path}: "
+        "(1) replace '(judge findings appear here)' in the ## Judge section with your findings, "
+        "(2) revise the ## Work Plan gates to address Critical and Important findings."
+    )
+
+
 def standing_orders() -> str:
     return """\
 ## Standing Orders
@@ -207,6 +230,7 @@ Then **ask the user** what they want to work on. Don't autonomously pick a task.
 tasks work <number>              # activate task, hook starts tracking
 tasks work done                  # deactivate when finished
 tasks new <type> <name>          # create task — does NOT activate
+tasks judge <number>             # blind plan review by independent agent
 tasks list [--pending]           # task overview
 tasks status                     # current gate position
 tasks bootstrap                  # orientation: mind map + skills + pending
@@ -226,12 +250,34 @@ tasks bootstrap                  # orientation: mind map + skills + pending
 # Bootstrap briefing
 # ---------------------------------------------------------------------------
 
+def identity_preamble() -> str:
+    """One-line framing shown at the top of bootstrap."""
+    return "You are a coding assistant working with a task management harness."
+
+
+def mind_map_header() -> str:
+    """Navigation header shown before mind map routing nodes at bootstrap."""
+    return (
+        "Project knowledge graph. Nodes cross-reference with [N] IDs.\n"
+        "Routing nodes [1-4] below — drill deeper: grep '^\\[N\\]' MIND_MAP.md\n"
+        "Format spec: /mindmap skill"
+    )
+
+
+def extract_routing_nodes(content: str) -> str:
+    """Extract routing nodes [1]-[4] from mind map content."""
+    import re
+    lines = content.splitlines()
+    routing = []
+    for line in lines:
+        if re.match(r'^\[([1-4])\]\s', line):
+            routing.append(line)
+    return '\n\n'.join(routing)
+
+
 def workflow_briefing() -> str:
-    """Workflow rules shown at bootstrap."""
+    """Workflow rules shown at task activation (tasks work <N>)."""
     return """\
-- Task numbers are zero-padded: 001, 012, 020 (not 1, 12, 20)
-- Always `tasks work <N>` before editing task.md — hooks enforce this
-- Never edit `## Status` directly — use `tasks work done`
 - One gate at a time: read gate → do work → check box → next gate
 - Pattern templates in task.md ARE the work plan — fill them in, don't skip"""
 
@@ -243,6 +289,7 @@ Tasks CLI:
   tasks work <N>           activate task (start here)
   tasks work done          mark done + deactivate
   tasks new <type> <name>  create task (doesn't activate)
+  tasks judge <N>          blind plan review
   tasks list [--pending]   show tasks
   tasks status             current gate position"""
 
@@ -271,12 +318,14 @@ Commands:
   new <type> <name>   Create task with playbook template
   list [--pending]    List all tasks with status
   status              Show head position for active tasks
+  judge <number>      Run blind plan-review judge on a task
 
 Task types: {types}
 
 Examples:
   tasks work 058
   tasks new feature add-auth
+  tasks judge 001
   tasks list --pending"""
 
 

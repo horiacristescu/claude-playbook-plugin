@@ -17,6 +17,17 @@ def _state_file(project_path: Path) -> Path:
     return agent_dir / "current_state"
 
 
+def _load_mind_map(project_path: Path, max_chars: int = 25000) -> str | None:
+    """Load MIND_MAP.md content, truncated to max_chars. Returns None if missing."""
+    mind_map = project_path / "MIND_MAP.md"
+    if not mind_map.exists():
+        return None
+    content = mind_map.read_text()
+    if len(content) > max_chars:
+        content = content[:max_chars] + "\n... (truncated)"
+    return content
+
+
 def find_project_root() -> Path:
     """Find project root by looking for .agent/tasks/, MIND_MAP.md, or CLAUDE.md."""
     cwd = Path.cwd()
@@ -118,6 +129,12 @@ def main():
             except OSError:
                 pass
 
+        # Workflow rules — deferred from bootstrap to task activation
+        from tasks.template import workflow_briefing
+        print("=== WORKFLOW ===")
+        print(workflow_briefing())
+        print()
+
         # Print the full task file
         print(task_file.read_text().rstrip())
 
@@ -162,11 +179,27 @@ def main():
 
         print(f"Created: {task_file.relative_to(project_path)}")
         print(f"Pattern: {pattern_name}")
-        playbook_path = _find_playbook_skill(project_path)
-        print(f"Playbook: {playbook_path or '(not found)'}")
+        print(f"Next: fill in task.md gates, then ask user to run: tasks work {task_num}")
         print()
-        print("Next: fill in task.md gates, then ask user to run: tasks work " + task_num)
-        print("Tip: Use `/playbook` skill for workflow patterns when writing gates.")
+
+        # Print full playbook so agent has workflow guidance inline
+        playbook_path = _find_playbook_skill(project_path)
+        if playbook_path:
+            playbook_file = Path(playbook_path)
+            if playbook_file.exists():
+                print("=== PLAYBOOK (task.md design guide) ===")
+                print("Use this to improve your task.md: select patterns and gates as appropriate,")
+                print("or invent new ones. This is a starting point — expand as needed.")
+                print()
+                content = playbook_file.read_text()
+                # Strip sections not relevant to task design
+                for marker in ["## Mind Map", "> Evidence base:"]:
+                    idx = content.find(marker)
+                    if idx > 0:
+                        content = content[:idx]
+                print(content.rstrip())
+                print()
+                print(f"Now fill in {task_file.relative_to(project_path)} — design a good task.md.")
 
     elif cmd == "init":
         # Target directory: argument or cwd
@@ -208,44 +241,97 @@ def main():
 
     elif cmd == "bootstrap":
         project_path = find_project_root()
-        home = Path.home()
 
-        # Workflow briefing — the rules agents need to work correctly
-        from tasks.template import workflow_briefing, cli_reference, autonomy_nudge
-        print("=== WORKFLOW ===")
-        print(workflow_briefing())
-        print()
-        print(cli_reference())
+        # Identity preamble
+        from tasks.template import identity_preamble, mind_map_header
+        print(identity_preamble())
         print()
 
-        # Mind Map - institutional memory for agents
-        mind_map = project_path / "MIND_MAP.md"
-        if mind_map.exists():
-            content = mind_map.read_text()
-            max_chars = 25000
-            print("=== MIND MAP (Your Institutional Memory) ===")
-            print("Read to understand project context. Update when things change.")
+        # Mind Map — full dump with navigation header
+        mm_content = _load_mind_map(project_path)
+        if mm_content:
+            print("=== MIND MAP (MIND_MAP.md) ===")
+            print(mind_map_header())
             print()
-            if len(content) <= max_chars:
-                print(content.rstrip())
-            else:
-                print(content[:max_chars].rstrip())
-                truncated = len(content) - max_chars
-                print(f"\n... ({truncated} chars truncated)")
+            print(mm_content.rstrip())
             print()
 
         # Pending tasks
         print("=== PENDING TASKS ===")
         list_tasks(project_path, pending_only=True)
 
-        # Next steps
-        print()
-        print(autonomy_nudge())
-
     elif cmd in ("list", "ls"):
         project_path = find_project_root()
         pending_only = "--pending" in cmd_args
         list_tasks(project_path, pending_only=pending_only)
+
+    elif cmd == "judge":
+        if not cmd_args:
+            print("Error: 'judge' requires a task number", file=sys.stderr)
+            print("Usage: tasks judge <number>", file=sys.stderr)
+            sys.exit(1)
+
+        import shutil
+        import subprocess
+
+        task_num = cmd_args[0]
+        project_path = find_project_root()
+        tasks_dir = project_path / ".agent" / "tasks"
+        matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
+        if not matches:
+            print(f"Task {task_num} not found", file=sys.stderr)
+            sys.exit(1)
+
+        task_file = matches[0]
+        task_path = str(task_file.relative_to(project_path))
+
+        claude_bin = shutil.which("claude")
+        if not claude_bin:
+            print("Error: 'claude' not found on PATH", file=sys.stderr)
+            sys.exit(1)
+
+        from tasks.template import judge_prompt
+        prompt = judge_prompt(task_path)
+
+        # Build system context: mind map + task content
+        context_parts = []
+        mm_content = _load_mind_map(project_path)
+        if mm_content:
+            context_parts.append(f"=== MIND_MAP.md ===\n{mm_content}")
+        context_parts.append(f"=== {task_path} ===\n{task_file.read_text()}")
+        system_context = "\n\n".join(context_parts)
+
+        env = os.environ.copy()
+        env["CLAUDECODE"] = ""
+        env["PLAYBOOK_SESSION_ID"] = "judge"
+
+        cmd_list = [
+            claude_bin, "-p",
+            "--dangerously-skip-permissions",
+            "--max-budget-usd", "2",
+            "--append-system-prompt", system_context,
+            prompt,
+        ]
+
+        print(f"Running blind judge on {task_path}...", flush=True)
+        result = subprocess.run(
+            cmd_list,
+            cwd=str(project_path),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout, end="", flush=True)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr, flush=True)
+
+        # Save judge output
+        judge_log = task_file.parent / "judge.log"
+        judge_log.write_text(result.stdout or "")
+        print(f"\nSaved: {judge_log.relative_to(project_path)}", flush=True)
+
+        sys.exit(result.returncode)
 
     elif cmd == "status":
         project_path = find_project_root()
