@@ -75,9 +75,7 @@ def understand() -> str:
 def structure() -> str:
     return """\
 ### Structure
-- [ ] What kind of work is this? (building something, finding something out, judging quality, choosing between options \u2014 or a combination?)
-- [ ] If it's a combination: what's the sequence? Where might you jump to building before you've understood enough?
-- [ ] If the approach is uncertain or the plan is long (>15 gates): where should you stop and decide whether to continue? Don't plan 20 steps if you haven't validated the direction."""
+- [ ] What kind of work is this? (build / investigate / evaluate / decide / combination?) If combination, what's the sequence? If >15 gates or uncertain approach, where do you stop and validate direction?"""
 
 
 def reflection_gates() -> str:
@@ -88,46 +86,14 @@ def reflection_gates() -> str:
 - [ ] If judging quality before building: is the gap worth closing?"""
 
 
-def extension_demonstrations() -> str:
-    return """\
-### Extension Demonstrations
-> When reality diverges from your plan, expand task.md with new gates.
-> These examples show what such expansions look like.
-> Each example needs: a trigger condition (*when* does this fire?), a sequence of steps with thinking checkpoints, and a task-specific question.
-> **Replace them with 3 adapted to your task's Intent.**
->
-> **Research Study** \u2014 *if investigation reveals an unexpected dimension:*
-> Investigate: round per dimension \u2192 Checkpoint: converging? what's missing?
-> \u2192 Extension: add dimension (or Critique: "what am I not seeing?")
-> \u2192 Investigate: new round \u2192 Build: synthesize findings
-> \u2192 Evaluate: lenses (completeness, depth, transferability) \u2192 Sufficiency: gaps worth closing?
->
-> **Deep Debug** \u2014 *if initial fix attempt fails:*
-> Build: attempt fix based on reading code \u2192 if fix fails \u2192 stop coding
-> \u2192 Investigate: observe actual behavior (probes/logs, not source)
-> \u2192 Hypothesis \u2192 Probe \u2192 Result \u2192 Checkpoint: root cause found or still guessing?
-> \u2192 Build: targeted fix from root cause \u2192 Evaluate: regression test, convert probe to permanent test
->
-> **Audit** \u2014 *if patterns emerge across sampled instances:*
-> Investigate: sample instances (don't cover everything)
-> \u2192 Checkpoint: patterns emerging? categories forming?
-> \u2192 Critique: am I imposing categories or letting them emerge?
-> \u2192 Investigate: test patterns against remaining instances \u2192 Checkpoint: converging or scattering?
-> \u2192 Build: write findings with evidence per pattern
-> \u2192 Evaluate: adversarial \u2014 "who was right?" with quoted evidence
-
-- [ ] Replaced the 3 generic examples above with 3 adapted to this task's Intent. Removed the "Replace them" instruction line."""
-
 
 def verify() -> str:
     return """\
 ### Verify
-- [ ] Review the work plan against extension demonstrations above. If a growth point is likely enough, add it to the plan now. Revise before executing.
+- [ ] Review the work plan. If a likely growth point exists, add it to the plan now.
 - [ ] Does the work plan include moments where you stop and question your approach \u2014 not just execute?
 - [ ] Checkpoint: Would a fresh agent understand this task and execute it well?
-- [ ] The work plan below has the right granularity (not too coarse, not micro-steps)
-
----"""
+- [ ] The work plan below has the right granularity (not too coarse, not micro-steps)"""
 
 
 def design_phase() -> str:
@@ -137,23 +103,27 @@ def design_phase() -> str:
         understand(),
         structure(),
         reflection_gates(),
-        extension_demonstrations(),
         verify(),
     ]
     return "\n\n".join(parts)
+
+
+def judge_section() -> str:
+    return """\
+## Judge
+- [ ] Run `tasks judge <N>` \u2014 wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates.
+
+(judge findings appear here)
+
+---"""
 
 
 def work_plan() -> str:
     return """\
 ## Work Plan
 
-> Design phase complete. Write your work gates below.
-> **For each section of work, answer two questions before writing the steps:**
-> 1. What could go wrong here? (Write it down \u2014 this becomes your risk check.)
-> 2. How will you know it worked? (Write a specific, falsifiable check \u2014 not "looks good" but "X contains Y".)
->
-> **Between sections, ask:** Is your plan still right? If what you've learned contradicts an assumption, say so and revise the plan. Don't keep executing a plan you know is wrong.
-> **Before wrapping up, ask:** What might you be wrong about? What did you assume that you haven't verified?
+> For each work section: what could go wrong? How will you know it worked? (specific check, not "looks good")
+> Standard feature: 6-8 work gates + tests. If >15 gates, validate the approach first.
 
 (write work gates here)
 
@@ -176,15 +146,18 @@ def parked() -> str:
 ---"""
 
 
-def judge_prompt(task_path: str) -> str:
+def judge_prompt(task_path: str, inline_context: bool = False) -> str:
     """Return the blind judge prompt for plan review.
 
     Args:
         task_path: Relative path to the task.md file (e.g. .agent/tasks/001-foo/task.md)
+        inline_context: If True, say context is "provided below" (for backends
+            without system prompt support, e.g. Codex). Default False = "in your system prompt".
     """
+    context_location = "provided below" if inline_context else "provided in your system prompt"
     return (
         "You are a senior engineer reviewing a PLAN — no code has been written yet. "
-        "The MIND_MAP.md and task.md are provided in your system prompt. "
+        f"The MIND_MAP.md and task.md are {context_location}. "
         "Read the source files referenced in the plan to understand existing patterns. "
         "Then critique the plan: "
         "(1) Will this approach actually fulfill the stated Intent? "
@@ -194,7 +167,7 @@ def judge_prompt(task_path: str) -> str:
         "Be specific and adversarial — your job is to find problems, not approve. "
         "Output numbered findings with severity (Critical/Important/Minor). "
         f"Then edit {task_path}: "
-        "(1) replace '(judge findings appear here)' in the ## Judge section with your findings, "
+        "(1) replace the entire contents of the ## Judge section (everything between '## Judge' and the next '##' heading) with your findings — this is idempotent on reruns, "
         "(2) revise the ## Work Plan gates to address Critical and Important findings."
     )
 
@@ -256,23 +229,13 @@ def identity_preamble() -> str:
 
 
 def mind_map_header() -> str:
-    """Navigation header shown before mind map routing nodes at bootstrap."""
+    """Navigation header shown before full mind map at bootstrap."""
     return (
         "Project knowledge graph. Nodes cross-reference with [N] IDs.\n"
-        "Routing nodes [1-4] below — drill deeper: grep '^\\[N\\]' MIND_MAP.md\n"
+        "Full map below — drill into a node: grep '^\\[N\\]' MIND_MAP.md\n"
         "Format spec: /mindmap skill"
     )
 
-
-def extract_routing_nodes(content: str) -> str:
-    """Extract routing nodes [1]-[4] from mind map content."""
-    import re
-    lines = content.splitlines()
-    routing = []
-    for line in lines:
-        if re.match(r'^\[([1-4])\]\s', line):
-            routing.append(line)
-    return '\n\n'.join(routing)
 
 
 def workflow_briefing() -> str:
@@ -292,13 +255,6 @@ Tasks CLI:
   tasks judge <N>          blind plan review
   tasks list [--pending]   show tasks
   tasks status             current gate position"""
-
-
-def autonomy_nudge() -> str:
-    """Nudge shown after bootstrap to prevent autonomous task selection."""
-    return """\
-IMPORTANT: Don't autonomously start tasks. Ask the user what to work on.
-  User tells you: tasks work <N> | tasks new <type> <name> | or just chat"""
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +309,7 @@ def render_template(num: int, title: str, task_type: str | None = None) -> str:
         status(),
         intent_why_refs(playbook_ref),
         design_phase(),
+        judge_section(),
         work_plan(),
         pre_review(),
         parked(),

@@ -18,14 +18,31 @@ def _state_file(project_path: Path) -> Path:
 
 
 def _load_mind_map(project_path: Path, max_chars: int = 25000) -> str | None:
-    """Load MIND_MAP.md content, truncated to max_chars. Returns None if missing."""
+    """Load MIND_MAP.md content. If over max_chars, keep head + tail, drop middle.
+
+    Head has overview nodes [1]-[4]; tail has recent additions and roadmap.
+    The middle is the most expendable, so we trim there on a line boundary.
+    """
     mind_map = project_path / "MIND_MAP.md"
     if not mind_map.exists():
         return None
     content = mind_map.read_text()
-    if len(content) > max_chars:
-        content = content[:max_chars] + "\n... (truncated)"
-    return content
+    if len(content) <= max_chars:
+        return content
+    # Keep 60% head, 40% tail — overview nodes are denser at the top
+    head_budget = int(max_chars * 0.6)
+    tail_budget = max_chars - head_budget
+    # Snap to line boundaries
+    head_end = content.rfind("\n", 0, head_budget)
+    if head_end < 0:
+        head_end = head_budget
+    tail_start = content.find("\n", len(content) - tail_budget)
+    if tail_start < 0:
+        tail_start = len(content) - tail_budget
+    head = content[:head_end]
+    tail = content[tail_start:]
+    omitted = content[head_end:tail_start].count("\n")
+    return f"{head}\n\n[... {omitted} lines omitted ...]\n{tail}"
 
 
 def find_project_root() -> Path:
@@ -268,13 +285,34 @@ def main():
     elif cmd == "judge":
         if not cmd_args:
             print("Error: 'judge' requires a task number", file=sys.stderr)
-            print("Usage: tasks judge <number>", file=sys.stderr)
+            print("Usage: tasks judge <number> [--backend claude|codex]", file=sys.stderr)
             sys.exit(1)
 
         import shutil
         import subprocess
 
-        task_num = cmd_args[0]
+        # Parse --backend flag (default: claude)
+        backend = "claude"
+        remaining_args = []
+        i = 0
+        while i < len(cmd_args):
+            if cmd_args[i] == "--backend" and i + 1 < len(cmd_args):
+                backend = cmd_args[i + 1]
+                i += 2
+            else:
+                remaining_args.append(cmd_args[i])
+                i += 1
+
+        if backend not in ("claude", "codex"):
+            print(f"Error: unknown backend '{backend}'", file=sys.stderr)
+            print("Supported: claude (default), codex", file=sys.stderr)
+            sys.exit(1)
+
+        if not remaining_args:
+            print("Error: 'judge' requires a task number", file=sys.stderr)
+            sys.exit(1)
+
+        task_num = remaining_args[0]
         project_path = find_project_root()
         tasks_dir = project_path / ".agent" / "tasks"
         matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
@@ -285,51 +323,101 @@ def main():
         task_file = matches[0]
         task_path = str(task_file.relative_to(project_path))
 
-        claude_bin = shutil.which("claude")
-        if not claude_bin:
-            print("Error: 'claude' not found on PATH", file=sys.stderr)
-            sys.exit(1)
-
         from tasks.template import judge_prompt
-        prompt = judge_prompt(task_path)
 
-        # Build system context: mind map + task content
+        # Build context: mind map + task content (bounded to avoid argv/context limits)
+        MAX_CONTEXT_CHARS = 100_000
         context_parts = []
         mm_content = _load_mind_map(project_path)
         if mm_content:
             context_parts.append(f"=== MIND_MAP.md ===\n{mm_content}")
-        context_parts.append(f"=== {task_path} ===\n{task_file.read_text()}")
+        task_content = task_file.read_text()
+        if len(task_content) > MAX_CONTEXT_CHARS // 2:
+            task_content = task_content[:MAX_CONTEXT_CHARS // 2] + "\n\n[... truncated for context budget ...]"
+        context_parts.append(f"=== {task_path} ===\n{task_content}")
         system_context = "\n\n".join(context_parts)
+        if len(system_context) > MAX_CONTEXT_CHARS:
+            system_context = system_context[:MAX_CONTEXT_CHARS] + "\n\n[... truncated for context budget ...]"
 
-        env = os.environ.copy()
-        env["CLAUDECODE"] = ""
-        env["PLAYBOOK_SESSION_ID"] = "judge"
+        if backend == "claude":
+            claude_bin = shutil.which("claude")
+            if not claude_bin:
+                print("Error: 'claude' not found on PATH", file=sys.stderr)
+                sys.exit(1)
 
-        cmd_list = [
-            claude_bin, "-p",
-            "--dangerously-skip-permissions",
-            "--max-budget-usd", "2",
-            "--append-system-prompt", system_context,
-            prompt,
-        ]
+            prompt = judge_prompt(task_path)
+            env = os.environ.copy()
+            env["CLAUDECODE"] = ""
+            env["PLAYBOOK_SESSION_ID"] = "judge"
 
-        print(f"Running blind judge on {task_path}...", flush=True)
-        result = subprocess.run(
-            cmd_list,
-            cwd=str(project_path),
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+            cmd_list = [
+                claude_bin, "-p",
+                "--dangerously-skip-permissions",
+                "--max-budget-usd", "2",
+                "--append-system-prompt", system_context,
+                prompt,
+            ]
+
+            print(f"Running blind judge (claude) on {task_path}...", flush=True)
+            result = subprocess.run(
+                cmd_list,
+                cwd=str(project_path),
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+        else:  # codex
+            codex_bin = shutil.which("codex")
+            if not codex_bin:
+                print("Error: 'codex' not found on PATH", file=sys.stderr)
+                print("Install: https://github.com/openai/codex", file=sys.stderr)
+                sys.exit(1)
+
+            prompt = judge_prompt(task_path, inline_context=True)
+            # Codex has no system prompt — inline context into the user prompt
+            full_prompt = f"{system_context}\n\n---\n\n{prompt}"
+
+            codex_log = task_file.parent / "judge-codex.log"
+            cmd_list = [
+                codex_bin, "exec",
+                "-s", "workspace-write",
+                "--ephemeral",
+                "-C", str(project_path),
+                "-o", str(codex_log),
+                "-",  # read prompt from stdin
+            ]
+
+            print(f"Running blind judge (codex) on {task_path}...", flush=True)
+            result = subprocess.run(
+                cmd_list,
+                cwd=str(project_path),
+                input=full_prompt,
+                capture_output=True,
+                text=True,
+            )
+
         if result.stdout:
             print(result.stdout, end="", flush=True)
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr, flush=True)
 
-        # Save judge output
-        judge_log = task_file.parent / "judge.log"
-        judge_log.write_text(result.stdout or "")
-        print(f"\nSaved: {judge_log.relative_to(project_path)}", flush=True)
+        # Save judge output — backend-specific log files
+        log_name = "judge.log" if backend == "claude" else "judge-codex.log"
+        judge_log = task_file.parent / log_name
+        output = (result.stdout or "").strip()
+        if result.returncode != 0 and not output:
+            if judge_log.exists():
+                print(f"\nJudge failed (exit {result.returncode}); kept previous {judge_log.relative_to(project_path)}", flush=True)
+            else:
+                print(f"\nJudge failed (exit {result.returncode}); no output to save", flush=True)
+        else:
+            if backend == "claude":
+                judge_log.write_text(result.stdout or "")
+            # codex: -o already writes the file; write stdout as fallback
+            elif not judge_log.exists() or not judge_log.read_text().strip():
+                judge_log.write_text(result.stdout or "")
+            print(f"\nSaved: {judge_log.relative_to(project_path)}", flush=True)
 
         sys.exit(result.returncode)
 
