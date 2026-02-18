@@ -11,11 +11,17 @@ set -e
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$HOOK_DIR/gate-echo-lib.sh"
 
-# Find project root
+# Find project root — only matches .agent/tasks/ (playbook projects)
 PROJECT_DIR=$(find_project_root)
 if [ -z "$PROJECT_DIR" ]; then
     echo '{}'
     exit 0
+fi
+
+# Check writability for gate echo counter and transition logging
+AGENT_WRITABLE=true
+if ! agent_dir_writable "$PROJECT_DIR"; then
+    AGENT_WRITABLE=false
 fi
 
 STATE_FILE="$PROJECT_DIR/.agent/current_state"
@@ -93,14 +99,16 @@ if [ -n "$GATE_LINE" ]; then
             PREV_TASK="${PREV_KEY%%:*}"
             PREV_LINE="${PREV_KEY##*:}"
             TRANSITION_MSG="# ✓ previous gate done (${PREV_COUNT} tool calls)"
-            {
-                echo "---"
-                echo ""
-                echo "**[G${PREV_TASK}:${PREV_LINE}]** [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] \`HOST\` (${PREV_COUNT} tool calls)"
-                echo ""
-                echo "- [x] ${PREV_TEXT}"
-                echo ""
-            } >> "$GATE_LOG"
+            if [ "$AGENT_WRITABLE" = true ]; then
+                {
+                    echo "---"
+                    echo ""
+                    echo "**[G${PREV_TASK}:${PREV_LINE}]** [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] \`HOST\` (${PREV_COUNT} tool calls)"
+                    echo ""
+                    echo "- [x] ${PREV_TEXT}"
+                    echo ""
+                } >> "$GATE_LOG"
+            fi
             # Gate-skip detection: new first-unchecked is above the just-completed gate
             if [ "$PREV_TASK" = "$TASK" ] && [ "$GATE_LINE" -lt "$PREV_LINE" ] 2>/dev/null; then
                 SKIP_MSG="
@@ -121,13 +129,15 @@ if [ -n "$GATE_LINE" ]; then
     else
         NEW_COUNT=1
     fi
-    printf '%s\n%s\n%s\n' "$GATE_KEY" "$NEW_COUNT" "$GATE_TEXT" > "$ECHO_COUNT_FILE"
+    if [ "$AGENT_WRITABLE" = true ]; then
+        printf '%s\n%s\n%s\n' "$GATE_KEY" "$NEW_COUNT" "$GATE_TEXT" > "$ECHO_COUNT_FILE"
+    fi
     if [ "$NEW_COUNT" -ge 10 ]; then
         REPEAT_MSG=" (same gate ${NEW_COUNT}x — are you stuck? edit the gate or replan: ${REL_PATH})"
     fi
 else
     # All gates done — log final gate if exists, clean up counter
-    if [ -f "$ECHO_COUNT_FILE" ]; then
+    if [ -f "$ECHO_COUNT_FILE" ] && [ "$AGENT_WRITABLE" = true ]; then
         PREV_KEY=$(sed -n '1p' "$ECHO_COUNT_FILE")
         PREV_COUNT=$(sed -n '2p' "$ECHO_COUNT_FILE")
         PREV_TEXT=$(sed -n '3p' "$ECHO_COUNT_FILE")

@@ -16,6 +16,11 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+# Skip cleanup if .agent/ isn't writable (sandbox mode)
+if ! agent_dir_writable "$PROJECT_DIR"; then
+    exit 0
+fi
+
 # Read stdin (SessionEnd JSON) — extract session_id
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
@@ -26,8 +31,21 @@ fi
 
 # Delete per-session state file if it exists
 STATE_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
+LEGACY_FILE="$PROJECT_DIR/.agent/current_state"
+
 if [ -f "$STATE_FILE" ]; then
+    # Read task number before deleting, to compare with legacy file
+    SESSION_TASK=$(cat "$STATE_FILE" 2>/dev/null | tr -d '[:space:]')
     rm -f "$STATE_FILE"
+
+    # Also remove plain current_state if it holds the same task number
+    # (prevents deleting another agent's active state)
+    if [ -f "$LEGACY_FILE" ]; then
+        LEGACY_TASK=$(cat "$LEGACY_FILE" 2>/dev/null | tr -d '[:space:]')
+        if [ "$LEGACY_TASK" = "$SESSION_TASK" ]; then
+            rm -f "$LEGACY_FILE"
+        fi
+    fi
 fi
 
 exit 0

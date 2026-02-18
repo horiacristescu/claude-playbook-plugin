@@ -22,6 +22,11 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+# Skip logging if .agent/ isn't writable (sandbox mode, non-playbook project)
+if ! agent_dir_writable "$PROJECT_DIR"; then
+    exit 0
+fi
+
 LOCAL_LOG="$PROJECT_DIR/.agent/chat_log.md"
 COUNTER_FILE="$PROJECT_DIR/.agent/chat_log_counter"
 

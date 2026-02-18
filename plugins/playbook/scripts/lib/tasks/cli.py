@@ -22,7 +22,14 @@ def _load_mind_map(project_path: Path, max_chars: int = 25000) -> str | None:
 
     Head has overview nodes [1]-[4]; tail has recent additions and roadmap.
     The middle is the most expendable, so we trim there on a line boundary.
+
+    Set PLAYBOOK_MINDMAP_MAX env var to override max_chars (0 = suppress entirely).
     """
+    env_max = os.environ.get("PLAYBOOK_MINDMAP_MAX")
+    if env_max is not None:
+        max_chars = int(env_max)
+        if max_chars == 0:
+            return None
     mind_map = project_path / "MIND_MAP.md"
     if not mind_map.exists():
         return None
@@ -88,9 +95,19 @@ def main():
 
         # Handle 'tasks work done' - deactivate current task and set Status in task.md
         if task_num == "done":
-            state_file = _state_file(project_path)
-            if state_file.exists():
-                prev_task = state_file.read_text().strip()
+            agent_dir = project_path / ".agent"
+            legacy_state = agent_dir / "current_state"
+            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
+            session_state = agent_dir / f"current_state.{session_id}" if session_id else None
+
+            # Find the active task from whichever state file exists
+            prev_task = None
+            for sf in [session_state, legacy_state]:
+                if sf and sf.exists():
+                    prev_task = sf.read_text().strip()
+                    break
+
+            if prev_task:
                 # Set ## Status to done in task.md
                 tasks_dir = project_path / ".agent" / "tasks"
                 matches = list(tasks_dir.glob(f"{prev_task}-*/task.md"))
@@ -102,7 +119,11 @@ def main():
                             lines[i + 1] = "done\n"
                             task_file.write_text("".join(lines))
                             break
-                state_file.unlink()
+                # Remove BOTH state files
+                if legacy_state.exists():
+                    legacy_state.unlink()
+                if session_state and session_state.exists():
+                    session_state.unlink()
                 print(f"Task {prev_task} done.")
             else:
                 print("No active task.")
@@ -131,10 +152,15 @@ def main():
                 print(f"Task {task_num} not found", file=sys.stderr)
             sys.exit(1)
 
-        # Write task number to current_state (per-session if PLAYBOOK_SESSION_ID set)
-        state_file = _state_file(project_path)
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(f"{task_num}\n")
+        # Write task number to current_state
+        # Always write plain current_state (hooks fallback), plus per-session if set
+        agent_dir = project_path / ".agent"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        legacy_state = agent_dir / "current_state"
+        legacy_state.write_text(f"{task_num}\n")
+        session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
+        if session_id:
+            (agent_dir / f"current_state.{session_id}").write_text(f"{task_num}\n")
 
         # Clean up stale per-session state files older than 24h
         agent_dir = project_path / ".agent"

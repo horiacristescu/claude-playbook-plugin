@@ -3,21 +3,14 @@
 # Shared logic for hooks: project root detection + gate parsing.
 
 # find_project_root
-# Walk up from $PWD looking for .agent/tasks/, MIND_MAP.md, or CLAUDE.md.
-# Matches the Python CLI logic in tasks/cli.py:find_project_root().
+# Walk up from $PWD looking for .agent/tasks/ (the definitive playbook marker).
+# CLAUDE.md and MIND_MAP.md alone are NOT sufficient — they exist in non-playbook
+# projects and would cause hooks to fire where they shouldn't.
 # Outputs the project root path, or empty string if not found.
 find_project_root() {
     local dir="$PWD"
     while true; do
         if [ -d "$dir/.agent/tasks" ]; then
-            echo "$dir"
-            return 0
-        fi
-        if [ -f "$dir/MIND_MAP.md" ]; then
-            echo "$dir"
-            return 0
-        fi
-        if [ -f "$dir/CLAUDE.md" ]; then
             echo "$dir"
             return 0
         fi
@@ -28,7 +21,16 @@ find_project_root() {
         dir="$parent"
     done
     echo ""
-    return 1
+    return 0  # "not found" communicated via empty output, not exit code (set -e safe)
+}
+
+# agent_dir_writable PROJECT_DIR
+# Returns 0 if .agent/ exists and is writable, 1 otherwise.
+# Use this before any hook that writes to .agent/ — in sandbox mode
+# the directory may exist but be read-only.
+agent_dir_writable() {
+    local agent_dir="$1/.agent"
+    [ -d "$agent_dir" ] && [ -w "$agent_dir" ]
 }
 
 # get_gate_info TASK_FILE
