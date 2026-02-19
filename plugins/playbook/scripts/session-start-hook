@@ -12,6 +12,10 @@
 
 set -e
 
+# Source shared lib (same directory)
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$HOOK_DIR/gate-echo-lib.sh"
+
 # Parse session_id from stdin JSON
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null)
@@ -23,6 +27,13 @@ fi
 # Write to CLAUDE_ENV_FILE so it persists for all Bash calls this session
 if [ -n "$CLAUDE_ENV_FILE" ]; then
     echo "export PLAYBOOK_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE"
+fi
+
+# Auto-provision .claude/bin/ wrappers for playbook projects
+PROJECT_DIR=$(find_project_root)
+if [ -n "$PROJECT_DIR" ]; then
+    create_wrapper "$PROJECT_DIR" tasks
+    create_wrapper "$PROJECT_DIR" sandbox
 fi
 
 exit 0

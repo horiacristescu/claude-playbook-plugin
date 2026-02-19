@@ -19,7 +19,7 @@
 ## Start Here
 
 ```bash
-.claude/scripts/tasks bootstrap          # loads mind map, skills, pending tasks
+.claude/bin/tasks bootstrap          # loads mind map, skills, pending tasks
 ```
 
 Then **ask the user** what they want to work on. Don't autonomously pick a task.
@@ -30,29 +30,29 @@ Read `MIND_MAP.md` at project root before starting any work. It's the project's 
 
 ## Task Lifecycle
 
-1. `.claude/scripts/tasks new <type> <name>` — creates `.agent/tasks/NNN-name/task.md` from the base template
-2. `.claude/scripts/tasks work <N>` — activates the task, hooks start enforcing
+1. `.claude/bin/tasks new <type> <name>` — creates `.agent/tasks/NNN-name/task.md` from the base template
+2. `.claude/bin/tasks work <N>` — activates the task, hooks start enforcing
 3. Work through task.md gates: Design Phase (understand, structure, verify) → Work Plan (build/investigate gates) → Pre-review
 4. Check each gate's checkbox as you complete it, appending your observations on the same line
-5. `.claude/scripts/tasks work done` — deactivates the task, sets status to done
+5. `.claude/bin/tasks work done` — deactivates the task, sets status to done
 
 The task.md **is** the execution trace. Never skip checkboxes. Never backfill. One gate at a time.
 
 ## CLI
 
 ```bash
-.claude/scripts/tasks work <number>              # activate task, hook starts tracking
-.claude/scripts/tasks work done                  # deactivate when finished
-.claude/scripts/tasks new <type> <name>          # create task — does NOT activate
-.claude/scripts/tasks list [--pending]           # task overview
-.claude/scripts/tasks status                     # current gate position
-.claude/scripts/tasks bootstrap                  # orientation: mind map + skills + pending
+.claude/bin/tasks work <number>              # activate task, hook starts tracking
+.claude/bin/tasks work done                  # deactivate when finished
+.claude/bin/tasks new <type> <name>          # create task — does NOT activate
+.claude/bin/tasks list [--pending]           # task overview
+.claude/bin/tasks status                     # current gate position
+.claude/bin/tasks bootstrap                  # orientation: mind map + skills + pending
 ```
 
 ## Don't
 
-- Create task directories manually — always `.claude/scripts/tasks new`
-- Edit `.agent/current_state` — use `.claude/scripts/tasks work <N>` / `.claude/scripts/tasks work done`
-- Edit `## Status` in task.md directly — use `.claude/scripts/tasks work done`
+- Create task directories manually — always `.claude/bin/tasks new`
+- Edit `.agent/current_state` — use `.claude/bin/tasks work <N>` / `.claude/bin/tasks work done`
+- Edit `## Status` in task.md directly — use `.claude/bin/tasks work done`
 - Skip task.md checkboxes — they're your observable progress
-- Start coding without an active task — blocked by hook until `.claude/scripts/tasks work <N>`
+- Start coding without an active task — blocked by hook until `.claude/bin/tasks work <N>`

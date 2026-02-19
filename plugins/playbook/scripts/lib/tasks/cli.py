@@ -282,6 +282,29 @@ def main():
         else:
             print("  CLAUDE.md      exists")
 
+        # Check for duplicate hook registrations
+        settings_file = target / ".claude" / "settings.json"
+        if settings_file.exists():
+            import json
+            try:
+                settings = json.loads(settings_file.read_text())
+                if "hooks" in settings:
+                    hook_events = list(settings["hooks"].keys())
+                    print(f"  ⚠ .claude/settings.json has local hook registrations: {', '.join(hook_events)}")
+                    print(f"    These may duplicate plugin hooks (hooks/hooks.json) — causing double writes.")
+                    print(f"    Fix: remove the 'hooks' key from .claude/settings.json")
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Check for stale .claude/hooks/ directory
+        local_hooks = target / ".claude" / "hooks"
+        if local_hooks.is_dir():
+            hook_files = [f.name for f in local_hooks.iterdir() if f.is_file()]
+            if hook_files:
+                print(f"  ⚠ .claude/hooks/ contains {len(hook_files)} hook scripts: {', '.join(hook_files)}")
+                print(f"    These are stale copies — canonical hooks live in scripts/ (resolved via plugin).")
+                print(f"    Fix: remove .claude/hooks/ directory")
+
     elif cmd == "bootstrap":
         project_path = find_project_root()
 

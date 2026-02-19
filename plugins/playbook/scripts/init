@@ -1,0 +1,129 @@
+#!/bin/bash
+# scripts/init — mechanical project setup for playbook plugin
+#
+# Creates .agent/tasks/, .claude/bin/ wrappers, settings.json permissions,
+# and MIND_MAP.md stub. Safe to re-run (idempotent).
+#
+# Usage: scripts/init [project-display-name]
+#   Operates on cwd (assumes cwd = target project root).
+#   $1 = optional display name for MIND_MAP.md (default: basename of cwd).
+
+set -e
+
+# Source shared lib (same directory as this script)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/gate-echo-lib.sh"
+
+PROJECT_DIR="$PWD"
+PROJECT_NAME="${1:-$(basename "$PWD")}"
+
+CREATED=()
+SKIPPED=()
+FAILED=()
+
+# --- (a) .agent/tasks/ ---
+if [ ! -d "$PROJECT_DIR/.agent/tasks" ]; then
+    mkdir -p "$PROJECT_DIR/.agent/tasks"
+    CREATED+=(".agent/tasks/")
+else
+    SKIPPED+=(".agent/tasks/ (exists)")
+fi
+
+# --- (b) settings.json permissions.deny merge ---
+SETTINGS_FILE="$PROJECT_DIR/.claude/settings.json"
+mkdir -p "$PROJECT_DIR/.claude"
+
+SETTINGS_RESULT=$(python3 -c "
+import json, sys, os
+
+path = '$SETTINGS_FILE'
+required = ['TodoWrite', 'Task']
+
+try:
+    if os.path.exists(path):
+        with open(path) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            print('ERROR:settings.json root is not an object', file=sys.stderr)
+            sys.exit(1)
+    else:
+        data = {}
+
+    perms = data.setdefault('permissions', {})
+    deny = perms.setdefault('deny', [])
+    added = []
+    for item in required:
+        if item not in deny:
+            deny.append(item)
+            added.append(item)
+
+    if added:
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.write('\n')
+        print('CREATED:' + ','.join(added))
+    else:
+        print('SKIPPED')
+except json.JSONDecodeError as e:
+    print(f'ERROR:settings.json is malformed JSON: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1) || {
+    FAILED+=("settings.json ($SETTINGS_RESULT)")
+    SETTINGS_RESULT=""
+}
+
+if [ -n "$SETTINGS_RESULT" ]; then
+    case "$SETTINGS_RESULT" in
+        CREATED:*)
+            CREATED+=("settings.json deny: ${SETTINGS_RESULT#CREATED:}")
+            ;;
+        SKIPPED)
+            SKIPPED+=("settings.json (already has deny list)")
+            ;;
+        ERROR:*)
+            FAILED+=("settings.json: ${SETTINGS_RESULT#ERROR:}")
+            ;;
+    esac
+fi
+
+# --- (c) MIND_MAP.md stub ---
+if [ ! -f "$PROJECT_DIR/MIND_MAP.md" ]; then
+    echo "# Mind Map — $PROJECT_NAME" > "$PROJECT_DIR/MIND_MAP.md"
+    CREATED+=("MIND_MAP.md (stub — run /mindmap to populate)")
+else
+    SKIPPED+=("MIND_MAP.md (exists)")
+fi
+
+# --- (d) .claude/bin/ wrappers ---
+create_wrapper "$PROJECT_DIR" tasks
+if [ -f "$PROJECT_DIR/.claude/bin/tasks" ]; then
+    CREATED+=(".claude/bin/tasks")
+fi
+
+create_wrapper "$PROJECT_DIR" sandbox
+if [ -f "$PROJECT_DIR/.claude/bin/sandbox" ]; then
+    CREATED+=(".claude/bin/sandbox")
+fi
+
+# --- (e) Summary ---
+echo "playbook init: $PROJECT_NAME"
+echo ""
+if [ ${#CREATED[@]} -gt 0 ]; then
+    echo "Created:"
+    for item in "${CREATED[@]}"; do
+        echo "  + $item"
+    done
+fi
+if [ ${#SKIPPED[@]} -gt 0 ]; then
+    echo "Skipped:"
+    for item in "${SKIPPED[@]}"; do
+        echo "  - $item"
+    done
+fi
+if [ ${#FAILED[@]} -gt 0 ]; then
+    echo "FAILED:"
+    for item in "${FAILED[@]}"; do
+        echo "  ! $item"
+    done
+    exit 1
+fi

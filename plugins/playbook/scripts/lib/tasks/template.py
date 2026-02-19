@@ -34,7 +34,7 @@ def status() -> str:
 ## Status
 pending
 
-> **Before filling this in:** run `tasks work <N>` to activate this task. Hooks won't enforce until activated."""
+> **Before filling this in:** run `.claude/bin/tasks work <N>` to activate this task. Hooks won't enforce until activated."""
 
 
 def intent_why_refs(playbook: str) -> str:
@@ -49,7 +49,7 @@ def intent_why_refs(playbook: str) -> str:
 - [ ] Context: `grep -Ein "keyword1|keyword2" MIND_MAP.md` \u2192 paste relevant excerpts below
 - Origin: Mxxx
 - Playbook: {playbook}
-- Note: Don't hardcode task numbers in plans \u2014 `tasks new` auto-increments.
+- Note: Don't hardcode task numbers in plans \u2014 `.claude/bin/tasks new` auto-increments.
 
 ---"""
 
@@ -111,7 +111,7 @@ def design_phase() -> str:
 def judge_section() -> str:
     return """\
 ## Judge
-- [ ] Run `tasks judge <N>` \u2014 wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates.
+- [ ] Run `.claude/bin/tasks judge <N>` \u2014 wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates.
 
 (judge findings appear here)
 

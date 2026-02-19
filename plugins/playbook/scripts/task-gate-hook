@@ -29,11 +29,11 @@ if [ -d "$PROJECT_DIR/.agent/tasks" ] && [ -f "$CLAUDE_MD" ]; then
     if ! grep -qE 'tasks bootstrap|tasks work' "$CLAUDE_MD" 2>/dev/null; then
         cat >&2 <<'MSG'
 WARNING: CLAUDE.md doesn't mention the task system. Essential commands:
-  tasks bootstrap          — load context
-  tasks work <N>           — activate task
-  tasks work done          — deactivate
-  tasks new <type> <name>  — create task
-  tasks list               — see all tasks
+  .claude/bin/tasks bootstrap          — load context
+  .claude/bin/tasks work <N>           — activate task
+  .claude/bin/tasks work done          — deactivate
+  .claude/bin/tasks new <type> <name>  — create task
+  .claude/bin/tasks list               — see all tasks
 MSG
     fi
 fi
@@ -62,11 +62,11 @@ if [ "$TOOL_NAME" = "Write" ]; then
     if echo "$FILE_PATH" | grep -qE '\.agent/tasks/[^/]+/task\.md$'; then
         if [ ! -f "$FILE_PATH" ]; then
             cat >&2 <<'MSG'
-BLOCKED: Only `tasks new` creates task.md files.
+BLOCKED: Only `.claude/bin/tasks new` creates task.md files.
 
 Don't create task files manually. The CLI enforces templates and numbering.
 
-Use:  tasks new <type> <name>
+Use:  .claude/bin/tasks new <type> <name>
 Types: feature, bugfix, refactor, explore, research, review, decision, test
 MSG
             exit 2
@@ -104,14 +104,14 @@ BLOCKED: No active task.
 Code edits require an active task so work is tracked and directed.
 
 Workflow:
-  1. tasks new <type> <name>   — create task
+  1. .claude/bin/tasks new <type> <name>   — create task
   2. Read /playbook, adapt task.md gates to the requirements
-  3. Ask the user before activating — don't run tasks work <N> on your own
-  4. tasks work <N>            — activate (hook starts tracking gates)
+  3. Ask the user before activating — don't run .claude/bin/tasks work <N> on your own
+  4. .claude/bin/tasks work <N>            — activate (hook starts tracking gates)
   5. ... do the work ...
-  6. tasks work done           — deactivate when finished
+  6. .claude/bin/tasks work done           — deactivate when finished
 
-To resume an existing task:  tasks work <N> (ask user first)
+To resume an existing task:  .claude/bin/tasks work <N> (ask user first)
 MSG
     exit 2
 fi
@@ -134,7 +134,7 @@ EOFX
         cat >&2 <<'MSG'
 BLOCKED: Don't create task directories manually.
 
-Use `tasks new <type> <name>` to create tasks. The CLI enforces templates and numbering.
+Use `.claude/bin/tasks new <type> <name>` to create tasks. The CLI enforces templates and numbering.
 
 Types: feature, bugfix, refactor, explore, research, review, decision, test
 MSG

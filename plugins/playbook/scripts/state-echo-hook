@@ -57,14 +57,14 @@ fi
 
 # Read task number
 if [ ! -f "$STATE_FILE" ]; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# No active task (tasks work <N> to activate)"}}'
+    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# No active task (.claude/bin/tasks work <N> to activate)"}}'
     exit 0
 fi
 
 TASK=$(head -1 "$STATE_FILE" | tr -d '[:space:]')
 
 if [ -z "$TASK" ]; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# No active task (tasks work <N> to activate)"}}'
+    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# No active task (.claude/bin/tasks work <N> to activate)"}}'
     exit 0
 fi
 
