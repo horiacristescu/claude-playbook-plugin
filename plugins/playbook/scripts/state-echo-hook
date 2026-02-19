@@ -29,6 +29,7 @@ STATE_FILE="$PROJECT_DIR/.agent/current_state"
 # Read stdin (PostToolUse JSON) — parse session_id for per-session state
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
+TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_name',''))" 2>/dev/null || echo "")
 
 # Use per-session state file if available
 if [ -n "$SESSION_ID" ]; then
@@ -38,16 +39,32 @@ if [ -n "$SESSION_ID" ]; then
     fi
 fi
 
+# Counter file (per-session, "default" fallback if no session_id)
+COUNTER_SESSION="${SESSION_ID:-default}"
+COUNTER_FILE="$PROJECT_DIR/.agent/.hook_counters.$COUNTER_SESSION"
+
+# Increment tool/write counters
+if [ "$AGENT_WRITABLE" = true ]; then
+    TOOLS_VAL=$(read_counter "$COUNTER_FILE" tools)
+    write_counter "$COUNTER_FILE" tools $(( ${TOOLS_VAL:-0} + 1 ))
+    case "$TOOL_NAME" in
+        Edit|Write|Bash)
+            WRITES_VAL=$(read_counter "$COUNTER_FILE" writes)
+            write_counter "$COUNTER_FILE" writes $(( ${WRITES_VAL:-0} + 1 ))
+            ;;
+    esac
+fi
+
 # Read task number
 if [ ! -f "$STATE_FILE" ]; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# ⚠ NO ACTIVE TASK — create or activate a task before doing work: tasks new <type> <name> | tasks work <number>"}}'
+    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# No active task (tasks work <N> to activate)"}}'
     exit 0
 fi
 
 TASK=$(head -1 "$STATE_FILE" | tr -d '[:space:]')
 
 if [ -z "$TASK" ]; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# ⚠ NO ACTIVE TASK — create or activate a task before doing work: tasks new <type> <name> | tasks work <number>"}}'
+    echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"# No active task (tasks work <N> to activate)"}}'
     exit 0
 fi
 
@@ -80,67 +97,66 @@ done < <(grep -nE '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null)
 # Make path relative to project
 REL_PATH="${TASK_FILE#$PROJECT_DIR/}"
 
-# Repetition detection + gate transition logging
-ECHO_COUNT_FILE="$PROJECT_DIR/.agent/.gate_echo_count"
+# Repetition detection + gate transition logging (using consolidated counter file)
 GATE_LOG="$PROJECT_DIR/.agent/chat_log.md"
 REPEAT_MSG=""
 TRANSITION_MSG=""
 SKIP_MSG=""
 if [ -n "$GATE_LINE" ]; then
     GATE_KEY="${TASK}:${GATE_LINE}"
-    if [ -f "$ECHO_COUNT_FILE" ]; then
-        PREV_KEY=$(sed -n '1p' "$ECHO_COUNT_FILE")
-        PREV_COUNT=$(sed -n '2p' "$ECHO_COUNT_FILE")
-        PREV_TEXT=$(sed -n '3p' "$ECHO_COUNT_FILE")
-        if [ "$PREV_KEY" = "$GATE_KEY" ]; then
-            NEW_COUNT=$((PREV_COUNT + 1))
-        else
-            # Gate changed — log the completed gate
-            PREV_TASK="${PREV_KEY%%:*}"
-            PREV_LINE="${PREV_KEY##*:}"
-            TRANSITION_MSG="# ✓ previous gate done (${PREV_COUNT} tool calls)"
-            if [ "$AGENT_WRITABLE" = true ]; then
-                {
-                    echo "---"
-                    echo ""
-                    echo "**[G${PREV_TASK}:${PREV_LINE}]** [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] \`HOST\` (${PREV_COUNT} tool calls)"
-                    echo ""
-                    echo "- [x] ${PREV_TEXT}"
-                    echo ""
-                } >> "$GATE_LOG"
-            fi
-            # Gate-skip detection: new first-unchecked is above the just-completed gate
-            if [ "$PREV_TASK" = "$TASK" ] && [ "$GATE_LINE" -lt "$PREV_LINE" ] 2>/dev/null; then
-                SKIP_MSG="
-# ⚠ Gate at line ${GATE_LINE} is still open above completed gate at line ${PREV_LINE} — reorder gates in task.md if working out of order."
-            fi
-            # Bare-checkmark detection: compare completed gate text with original
-            BARE_MSG=""
-            if [ -n "$TASK_FILE" ] && [ -n "$PREV_LINE" ]; then
-                COMPLETED_LINE=$(sed -n "${PREV_LINE}p" "$TASK_FILE" 2>/dev/null)
-                COMPLETED_TEXT=$(echo "$COMPLETED_LINE" | sed 's/^[[:space:]]*- \[[xX]\] *//')
-                if [ "$COMPLETED_TEXT" = "$PREV_TEXT" ]; then
-                    BARE_MSG="
-# ⚠ Gate closed with bare checkmark — append your outcome. (line ${PREV_LINE})"
-                fi
-            fi
-            NEW_COUNT=1
+    PREV_KEY=$(read_counter "$COUNTER_FILE" gate_key)
+    PREV_COUNT=$(read_counter "$COUNTER_FILE" gate_count)
+    PREV_TEXT=$(read_counter "$COUNTER_FILE" gate_text)
+    if [ -n "$PREV_KEY" ] && [ "$PREV_KEY" = "$GATE_KEY" ]; then
+        NEW_COUNT=$((PREV_COUNT + 1))
+    elif [ -n "$PREV_KEY" ]; then
+        # Gate changed — log the completed gate
+        PREV_TASK="${PREV_KEY%%:*}"
+        PREV_LINE="${PREV_KEY##*:}"
+        TRANSITION_MSG="# ✓ previous gate done (${PREV_COUNT} tool calls)"
+        if [ "$AGENT_WRITABLE" = true ]; then
+            {
+                echo "---"
+                echo ""
+                echo "**[G${PREV_TASK}:${PREV_LINE}]** [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] \`HOST\` (${PREV_COUNT} tool calls)"
+                echo ""
+                echo "- [x] ${PREV_TEXT}"
+                echo ""
+            } >> "$GATE_LOG"
         fi
+        # Gate-skip detection: new first-unchecked is above the just-completed gate
+        if [ "$PREV_TASK" = "$TASK" ] && [ "$GATE_LINE" -lt "$PREV_LINE" ] 2>/dev/null; then
+            SKIP_MSG="
+# ⚠ Gate at line ${GATE_LINE} is still open above completed gate at line ${PREV_LINE} — reorder gates in task.md if working out of order."
+        fi
+        # Bare-checkmark detection: compare completed gate text with original
+        BARE_MSG=""
+        if [ -n "$TASK_FILE" ] && [ -n "$PREV_LINE" ]; then
+            COMPLETED_LINE=$(sed -n "${PREV_LINE}p" "$TASK_FILE" 2>/dev/null)
+            COMPLETED_TEXT=$(echo "$COMPLETED_LINE" | sed 's/^[[:space:]]*- \[[xX]\] *//')
+            if [ "$COMPLETED_TEXT" = "$PREV_TEXT" ]; then
+                BARE_MSG="
+# ⚠ Gate closed with bare checkmark — append your outcome. (line ${PREV_LINE})"
+            fi
+        fi
+        NEW_COUNT=1
     else
         NEW_COUNT=1
     fi
     if [ "$AGENT_WRITABLE" = true ]; then
-        printf '%s\n%s\n%s\n' "$GATE_KEY" "$NEW_COUNT" "$GATE_TEXT" > "$ECHO_COUNT_FILE"
+        write_counter "$COUNTER_FILE" gate_key "$GATE_KEY"
+        write_counter "$COUNTER_FILE" gate_count "$NEW_COUNT"
+        write_counter "$COUNTER_FILE" gate_text "$GATE_TEXT"
     fi
     if [ "$NEW_COUNT" -ge 10 ]; then
         REPEAT_MSG=" (same gate ${NEW_COUNT}x — are you stuck? edit the gate or replan: ${REL_PATH})"
     fi
 else
-    # All gates done — log final gate if exists, clean up counter
-    if [ -f "$ECHO_COUNT_FILE" ] && [ "$AGENT_WRITABLE" = true ]; then
-        PREV_KEY=$(sed -n '1p' "$ECHO_COUNT_FILE")
-        PREV_COUNT=$(sed -n '2p' "$ECHO_COUNT_FILE")
-        PREV_TEXT=$(sed -n '3p' "$ECHO_COUNT_FILE")
+    # All gates done — log final gate if exists, clean up gate_* counters
+    PREV_KEY=$(read_counter "$COUNTER_FILE" gate_key)
+    if [ -n "$PREV_KEY" ] && [ "$AGENT_WRITABLE" = true ]; then
+        PREV_COUNT=$(read_counter "$COUNTER_FILE" gate_count)
+        PREV_TEXT=$(read_counter "$COUNTER_FILE" gate_text)
         PREV_TASK="${PREV_KEY%%:*}"
         PREV_LINE="${PREV_KEY##*:}"
         {
@@ -151,16 +167,14 @@ else
             echo "- [x] ${PREV_TEXT}"
             echo ""
         } >> "$GATE_LOG"
-        rm -f "$ECHO_COUNT_FILE"
+        # Clear gate_* fields (task complete), keep tools/writes
+        write_counter "$COUNTER_FILE" gate_key ""
+        write_counter "$COUNTER_FILE" gate_count ""
+        write_counter "$COUNTER_FILE" gate_text ""
     fi
 fi
 
-if [ -z "$GATE_LINE" ]; then
-    CONTEXT="# [${TASK}] — all gates done. Close this task: tasks work done"
-else
-    CONTEXT="# Working on task [${TASK}] gate (${DONE_GATES}/${TOTAL_GATES}) -> [ ] ${GATE_TEXT}${REPEAT_MSG}
-# Done? Check the box: ${REL_PATH}:${GATE_LINE}"
-fi
+CONTEXT=$(format_context "$TASK" "$DONE_GATES" "$TOTAL_GATES" "${GATE_TEXT}${REPEAT_MSG}" "$GATE_LINE" "$REL_PATH")
 if [ -n "$TRANSITION_MSG" ]; then
     CONTEXT="${TRANSITION_MSG}
 ${CONTEXT}"

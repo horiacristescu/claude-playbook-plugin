@@ -33,6 +33,10 @@ fi
 STATE_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
 LEGACY_FILE="$PROJECT_DIR/.agent/current_state"
 
+# Delete per-session counter file
+COUNTER_FILE="$PROJECT_DIR/.agent/.hook_counters.$SESSION_ID"
+rm -f "$COUNTER_FILE"
+
 if [ -f "$STATE_FILE" ]; then
     # Read task number before deleting, to compare with legacy file
     SESSION_TASK=$(cat "$STATE_FILE" 2>/dev/null | tr -d '[:space:]')

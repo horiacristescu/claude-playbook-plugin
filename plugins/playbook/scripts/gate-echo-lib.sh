@@ -68,6 +68,44 @@ get_gate_info() {
     echo "$done $total $gate_line $gate_text"
 }
 
+# read_counter FILE KEY
+# Read a key=value from the counter file. Outputs the value, or empty if missing.
+read_counter() {
+    local file="$1" key="$2"
+    if [ -f "$file" ]; then
+        sed -n "s/^${key}=//p" "$file" 2>/dev/null | head -1
+    fi
+}
+
+# write_counter FILE KEY VALUE
+# Set a key=value in the counter file. Creates file if missing, updates in-place if key exists.
+write_counter() {
+    local file="$1" key="$2" value="$3"
+    if [ -f "$file" ] && grep -q "^${key}=" "$file" 2>/dev/null; then
+        # Update existing key — use | as sed delimiter since values won't contain it
+        sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file" && rm -f "$file.bak"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
+}
+
+# reset_counters FILE
+# Reset tools=0 and writes=0, preserving gate_* fields. Creates file if missing.
+reset_counters() {
+    local file="$1"
+    if [ -f "$file" ]; then
+        # Preserve gate_* lines, reset tools/writes
+        local gate_lines
+        gate_lines=$(grep '^gate_' "$file" 2>/dev/null || true)
+        printf 'tools=0\nwrites=0\n' > "$file"
+        if [ -n "$gate_lines" ]; then
+            echo "$gate_lines" >> "$file"
+        fi
+    else
+        printf 'tools=0\nwrites=0\n' > "$file"
+    fi
+}
+
 # format_context TASK_NUM DONE TOTAL GATE_TEXT GATE_LINE REL_PATH
 # Outputs the formatted context string for the hook
 format_context() {
