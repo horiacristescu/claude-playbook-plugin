@@ -432,6 +432,7 @@ def main():
                         '        (require-not (subpath "/var/folders"))\n'
                         '        (require-not (subpath "/private/var/folders"))\n'
                         f'        (require-not (regex #"^{home_dir}/\\.claude"))\n'
+                        f'        (require-not (subpath "{home_dir}/.cache"))\n'
                         f'        (require-not (subpath "{home_dir}/.local"))\n'
                         f'        (require-not (subpath "{home_dir}/Library"))\n'
                         '        (require-not (subpath "/dev"))\n'

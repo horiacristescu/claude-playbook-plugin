@@ -55,6 +55,8 @@ case "$(uname -s)" in
         echo "  .git:    $GIT_DIR (read-only)"
         echo "  outside: blocked"
         echo ""
+        # Redirect tool caches to /tmp — Claude Code's inner sandbox blocks ~/.cache
+        export UV_CACHE_DIR="/tmp/uv-cache"
         exec sandbox-exec -p "$PROFILE" claude --dangerously-skip-permissions "$@"
         ;;
 
