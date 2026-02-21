@@ -91,6 +91,8 @@ def main():
             sys.exit(1)
 
         task_num = cmd_args[0]
+        if task_num != "done" and task_num.isdigit():
+            task_num = task_num.zfill(3)
         project_path = find_project_root()
 
         # Handle 'tasks work done' - deactivate current task and set Status in task.md
@@ -362,6 +364,8 @@ def main():
             sys.exit(1)
 
         task_num = remaining_args[0]
+        if task_num.isdigit():
+            task_num = task_num.zfill(3)
         project_path = find_project_root()
         tasks_dir = project_path / ".agent" / "tasks"
         matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
@@ -399,13 +403,47 @@ def main():
             env["CLAUDECODE"] = ""
             env["PLAYBOOK_SESSION_ID"] = "judge"
 
-            cmd_list = [
+            claude_args = [
                 claude_bin, "-p",
                 "--dangerously-skip-permissions",
                 "--max-budget-usd", "2",
                 "--append-system-prompt", system_context,
                 prompt,
             ]
+
+            # Wrap in seatbelt sandbox on macOS (write containment)
+            import platform
+            if platform.system() == "Darwin" and shutil.which("sandbox-exec"):
+                git_dir = subprocess.run(
+                    ["git", "rev-parse", "--git-dir"],
+                    cwd=str(project_path), capture_output=True, text=True,
+                ).stdout.strip()
+                if git_dir:
+                    git_dir = str(Path(git_dir).resolve())
+                    proj_dir = str(project_path.resolve())
+                    home_dir = str(Path.home())
+                    profile = (
+                        '(version 1)\n(allow default)\n'
+                        '(deny file-write*\n'
+                        '    (require-all\n'
+                        f'        (require-not (subpath "{proj_dir}"))\n'
+                        '        (require-not (subpath "/tmp"))\n'
+                        '        (require-not (subpath "/private/tmp"))\n'
+                        '        (require-not (subpath "/var/folders"))\n'
+                        '        (require-not (subpath "/private/var/folders"))\n'
+                        f'        (require-not (regex #"^{home_dir}/\\.claude"))\n'
+                        f'        (require-not (subpath "{home_dir}/.local"))\n'
+                        f'        (require-not (subpath "{home_dir}/Library"))\n'
+                        '        (require-not (subpath "/dev"))\n'
+                        '    )\n'
+                        ')\n'
+                        f'(deny file-write* (subpath "{git_dir}"))'
+                    )
+                    cmd_list = ["sandbox-exec", "-p", profile] + claude_args
+                else:
+                    cmd_list = claude_args
+            else:
+                cmd_list = claude_args
 
             print(f"Running blind judge (claude) on {task_path}...", flush=True)
             result = subprocess.run(

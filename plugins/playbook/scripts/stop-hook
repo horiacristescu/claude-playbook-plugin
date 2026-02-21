@@ -30,12 +30,9 @@ fi
 
 STATE_FILE="$PROJECT_DIR/.agent/current_state"
 
-# Use per-session state file if available
+# Use per-session state file when session_id is known
 if [ -n "$SESSION_ID" ]; then
-    PER_SESSION_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
-    if [ -f "$PER_SESSION_FILE" ]; then
-        STATE_FILE="$PER_SESSION_FILE"
-    fi
+    STATE_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
 fi
 
 # No active task — allow
