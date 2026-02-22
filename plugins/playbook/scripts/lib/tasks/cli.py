@@ -401,6 +401,8 @@ def main():
             prompt = judge_prompt(task_path)
             env = os.environ.copy()
             env["CLAUDECODE"] = ""
+            env.pop("CLAUDE_CODE_SSE_PORT", None)
+            env.pop("CLAUDE_CODE_ENTRYPOINT", None)
             env["PLAYBOOK_SESSION_ID"] = "judge"
 
             claude_args = [
