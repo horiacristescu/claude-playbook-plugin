@@ -392,13 +392,16 @@ def main():
         if len(system_context) > MAX_CONTEXT_CHARS:
             system_context = system_context[:MAX_CONTEXT_CHARS] + "\n\n[... truncated for context budget ...]"
 
+        from tasks.core import _extract_status
+        judge_mode = "impl" if _extract_status(task_file).startswith("done") else "plan"
+
         if backend == "claude":
             claude_bin = shutil.which("claude")
             if not claude_bin:
                 print("Error: 'claude' not found on PATH", file=sys.stderr)
                 sys.exit(1)
 
-            prompt = judge_prompt(task_path)
+            prompt = judge_prompt(task_path, mode=judge_mode)
             env = os.environ.copy()
             env["CLAUDECODE"] = ""
             env.pop("CLAUDE_CODE_SSE_PORT", None)
@@ -464,7 +467,7 @@ def main():
                 print("Install: https://github.com/openai/codex", file=sys.stderr)
                 sys.exit(1)
 
-            prompt = judge_prompt(task_path, inline_context=True)
+            prompt = judge_prompt(task_path, inline_context=True, mode=judge_mode)
             # Codex has no system prompt — inline context into the user prompt
             full_prompt = f"{system_context}\n\n---\n\n{prompt}"
 

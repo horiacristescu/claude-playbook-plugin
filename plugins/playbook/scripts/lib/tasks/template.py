@@ -146,27 +146,47 @@ def parked() -> str:
 ---"""
 
 
-def judge_prompt(task_path: str, inline_context: bool = False) -> str:
-    """Return the blind judge prompt for plan review.
+def judge_prompt(task_path: str, inline_context: bool = False,
+                 mode: str = "plan") -> str:
+    """Return the blind judge prompt for plan or implementation review.
 
     Args:
         task_path: Relative path to the task.md file (e.g. .agent/tasks/001-foo/task.md)
         inline_context: If True, say context is "provided below" (for backends
             without system prompt support, e.g. Codex). Default False = "in your system prompt".
+        mode: "plan" for pre-implementation review, "impl" for post-implementation review.
     """
     context_location = "provided below" if inline_context else "provided in your system prompt"
+
+    if mode == "impl":
+        return (
+            "You are a senior engineer reviewing a COMPLETED implementation. "
+            f"The MIND_MAP.md and task.md are {context_location}. "
+            "Read the source files changed by this task (look at the Work Plan gates for paths). "
+            "Review through four lenses: "
+            "(1) Simplify — what's unnecessary or over-engineered? What can be removed? "
+            "(2) Self-critique — does the code actually fulfill the stated Intent? What would a skeptic say? "
+            "(3) Bug scan — find actual bugs, edge cases, race conditions, or security issues. "
+            "(4) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
+            "Be specific and adversarial — your job is to find problems, not approve. "
+            "Max 5 findings, Critical and Important only — drop Minor. "
+            "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
+            f"Then edit {task_path}: "
+            "(1) replace the entire contents of the ## Judge section (everything between '## Judge' and the next '##' heading) with your findings — this is idempotent on reruns."
+        )
+
     return (
         "You are a senior engineer reviewing a PLAN — no code has been written yet. "
         f"The MIND_MAP.md and task.md are {context_location}. "
         "Read the source files referenced in the plan to understand existing patterns. "
-        "Then critique the plan: "
-        "(1) Will this approach actually fulfill the stated Intent? "
-        "(2) What's missing or underspecified? "
-        "(3) What will go wrong that isn't addressed? "
-        "(4) Is anything over-engineered? "
+        "Then critique the plan through four lenses: "
+        "(1) Intent alignment — will this approach actually fulfill the stated Intent? What's missing or underspecified? "
+        "(2) Failure modes — what will go wrong that isn't addressed? Construct a concrete failing scenario. "
+        "(3) Simplify — is anything over-engineered? What can be dropped? "
+        "(4) Prove it — cite file:line evidence for claims about existing code. No hand-waving. "
         "Be specific and adversarial — your job is to find problems, not approve. "
         "Max 5 findings, Critical and Important only — drop Minor. "
-        "Each finding: 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
+        "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
         f"Then edit {task_path}: "
         "(1) replace the entire contents of the ## Judge section (everything between '## Judge' and the next '##' heading) with your findings — this is idempotent on reruns, "
         "(2) revise the ## Work Plan gates to address Critical and Important findings."
