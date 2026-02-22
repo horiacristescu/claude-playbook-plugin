@@ -217,6 +217,7 @@ tasks bootstrap                  # orientation: mind map + skills + pending
 - Edit `## Status` in task.md directly — use `tasks work done`
 - Skip task.md checkboxes — they're your observable progress
 - Start coding without an active task — blocked by hook until `tasks work <N>`
+- Use EnterPlanMode or plan files — use `tasks new <type> <name>` instead, the task.md IS the plan
 """
 
 

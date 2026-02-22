@@ -37,7 +37,7 @@ SETTINGS_RESULT=$(python3 -c "
 import json, sys, os
 
 path = '$SETTINGS_FILE'
-required = ['TodoWrite', 'Task']
+required = ['TodoWrite', 'Task', 'EnterPlanMode']
 
 try:
     if os.path.exists(path):
