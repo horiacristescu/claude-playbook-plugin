@@ -136,7 +136,8 @@ create_wrapper() {
     local wrapper_path="$project_dir/.claude/bin/$wrapper_name"
 
     # Skip custom wrappers (no playbook-managed marker)
-    if [ -f "$wrapper_path" ]; then
+    # Empty files are NOT custom — overwrite them (self-healing)
+    if [ -f "$wrapper_path" ] && [ -s "$wrapper_path" ]; then
         if ! grep -q '# playbook-managed' "$wrapper_path" 2>/dev/null; then
             return 0
         fi
