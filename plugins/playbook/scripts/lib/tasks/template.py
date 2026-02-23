@@ -69,6 +69,7 @@ def understand() -> str:
 - [ ] Restate the request in my own words. What does the user actually want?
 - [ ] Critique: Am I solving the stated problem or a different one I find more interesting?
 - [ ] What would "done" look like? How will we know the task succeeded?
+- [ ] What are you assuming about the existing code/architecture that you haven't verified?
 - [ ] What is OUT of scope for this task?"""
 
 

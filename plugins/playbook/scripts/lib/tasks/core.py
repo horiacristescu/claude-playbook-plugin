@@ -8,15 +8,13 @@ from pathlib import Path
 # Task type → pattern name in playbook skill
 PLAYBOOKS = {
     "feature": "Build",
-    "bugfix": "Investigate",
+    "bugfix": "Fix",
     "refactor": "Build",
-    "explore": "Investigate",
+    "cleanup": "Fix",
+    "ops": "Build",
+    "audit": "Evaluate",
+    "eval": "Evaluate",
     "research": "Investigate",
-    "spike": "Investigate",
-    "decision": "Decide",
-    "review": "Evaluate",
-    "commit": "Build",
-    "test": "Evaluate",
 }
 
 

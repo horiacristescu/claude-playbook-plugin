@@ -1,8 +1,8 @@
 ---
 name: playbook
 description: >
-  Composable workflow patterns for task execution. Five core patterns (Build,
-  Investigate, Evaluate, Decide, UI Debug) plus structural reflection gates.
+  Composable workflow patterns for task execution. Four core patterns (Build,
+  Fix, Investigate, Evaluate) plus UI Debug and structural reflection gates.
   Pick what fits, compose as needed. The rhythm matters more than the content.
 argument-hint: [pattern-name]
 ---
@@ -57,6 +57,7 @@ pattern section. Use Replan when stuck or when critique reveals a gap.
 - **Extension:** Task spawns new scope within the document, with Critique at the boundary. Scope grows explicitly, not silently.
 - **Adversarial examples:** "Who was right?" with quoted evidence. Tests the model against reality, not just coverage metrics.
 - **Quantified checkpoints:** Numbers, not yes/no. "57 tests doing real work" beats "tests look good."
+- **Decide:** Inline tradeoff gate: `- [ ] Decide: A is ___. B is ___. Choosing ___ because ___.` For major decisions, add an options table with pros/cons/cost-to-undo before deciding.
 
 ---
 
@@ -90,160 +91,90 @@ work begins.
 
 ### Build
 
-Step-test interleave. For implementing features, refactoring, any code work.
+Step-test interleave. For features, refactoring, infra, docs, ports.
 
-```markdown
-## Build: [what]
+**Ask before planning:**
+1. What does "done" look like — concretely, not vaguely? *(tasks with specific acceptance criteria executed cleanly; vague "done" led to scope creep)*
+2. After each step, what's the smallest test that proves it worked? *(deferred tests = quality drops — never let a step pass without paired verification)*
+3. What are you assuming about the existing code that you haven't verified? *(the plan is a debugging surface for invisible assumptions — wrong beliefs about architecture, APIs, or data flow cause cascading rework when they surface late)*
+4. Are you building or refactoring? Don't mix them in the same step. *(refactors that become features are the #1 scope explosion pattern)*
+5. Does this touch existing contracts other code depends on? *(judge catches wiring gaps when >2 files are touched — consider running it)*
 
-- [ ] Step 1: [what to implement]
+```
+- [ ] Step: [what to implement]
 - [ ] Test: [what to verify]
-- [ ] Checkpoint: [task-specific question — what did I learn? scope still matching Intent?]
-- [ ] Step 2: [what to implement]
-- [ ] Test: [what to verify]
-- [ ] Checkpoint: [what's surprising? scope changed? continue, replan, or split?]
-
-### Pre-review
-- [ ] All tests pass
-- [ ] No debug artifacts
-- [ ] MIND_MAP.md updated if new insights emerged
+- [ ] Checkpoint: [scope still matching Intent?]
 ```
 
-**Disciplines:**
-- Small steps. Each step has a test.
-- If tests break, revert and try smaller.
-- No feature work during refactoring, no refactoring during feature work.
-- For hooks/CLI/integrations: test by running the real system, not just unit tests.
-- Right-sizing: 2-step change → 4-5 gates. Standard feature → 6-8 gates. Research → 10-15 gates. 20+ gates → have you validated the approach first?
+Right-sizing: UX polish → 1-3 gates. Cleanup/bugfix → 2-4. Feature → 6-8. Port → 8-12. Research → 10-15. 20+ → validate approach first.
+
+---
+
+### Fix
+
+Locate, correct, verify. For bugfixes and cleanup.
+
+**Ask before planning:**
+1. Do you actually know the root cause, or are you assuming? *(the "assumed root cause" trap: one task assumed 3 causes, only 1 was real — investigate first if uncertain)*
+2. What's the smallest change that fixes it? *(best fixes were 1-3 gates; full Design Phase is overhead for known-cause bugs)*
+3. What will you grep/test to confirm it's fixed? *(for cleanup: `grep -r 'removed_thing'` returning zero is the universal test)*
+4. What adjacent code might break from this change? *(adjacent discovery is the norm — expect to find related issues)*
+5. Did you find something else while fixing? Capture it, don't expand scope. *(cleanup chains from discovery — keep scope tight, park the rest)*
+
+```
+- [ ] Fix: [what to change]
+- [ ] Verify: [grep/test that confirms]
+```
+
+For unknown-cause bugs, compose Investigate → Fix. For cleanup, grep-verify-delete.
 
 ---
 
 ### Investigate
 
-Observe-hypothesize-test-conclude. For debugging, exploring, researching.
+Hypothesize-test-conclude in rounds. For research, debugging, exploration.
 
-```markdown
-## Investigate: [what]
+**Ask before planning:**
+1. What's your hypothesis before you start looking? *(state it first — no fishing; the hypothesis shapes what you notice)*
+2. Are you still finding new information, or confirming what you already believe? *(the critique round that asks "am I confirming or testing?" was the highest-leverage gate in research tasks)*
+3. What would change your mind? *(research without convergence forcing becomes eternal — if 2 rounds produce no new position, stop)*
+4. Can you show the evidence, not just describe the conclusion? *(hypothesis/finding tables and captured artifacts were the most useful deliverables)*
+5. What emerged that you didn't expect? *(this question is more generative than "is this working?" — it forces noticing)*
 
-### Observation
-- **What I see:**
-- **What I expected:**
-- **Evidence:**
-
-- [ ] Symptom documented
-
-### Round 1: [focus area]
-- **Hypothesis:** [state before testing]
+```
+### Round N: [focus]
+- **Hypothesis:** [before testing]
 - **Test:** [what to check]
 - **Result:** [what happened]
-- [ ] Checkpoint: converging or scattering? [task-specific question]
-
-### Round 2: [focus area] (if needed)
-- **Hypothesis:**
-- **Test:**
-- **Result:**
-- [ ] Checkpoint: [task-specific question] Scope still matching Intent?
-
-(add rounds as needed — if position stops changing for 2 rounds, stop)
-
-### Conclusion
-- **Root cause / finding:**
-- **Evidence that confirms:**
-- **What I didn't know before:**
-- **What emerged that I didn't expect:**
-
-- [ ] Conclusion supported by evidence
+- [ ] Checkpoint: converging or scattering?
 ```
 
-**Disciplines:**
-- For incident/bug tasks: start with a Problem Summary (timeline, impact, what's known) before the hypothesis table.
-- State the hypothesis before testing it. No fishing.
-- Auto-revert failed fix attempts (debugger mode).
-- Convergence check: if position stops changing for 2 rounds, stop (researcher mode).
-- Go broad first (structure, stack, entry points), then drill deep (explorer mode).
+For docs-from-sources: capture source material before writing. For compression: define retention criteria + findability queries as acceptance tests.
 
 ---
 
 ### Evaluate
 
-Pre-check, lenses, verdict. For reviewing, testing, assessing quality.
+Scan, assess, synthesize. For audits, reviews, evaluation campaigns.
 
-```markdown
-## Evaluate: [what]
+**Ask before planning:**
+1. What are you measuring, and are you applying the same lenses to everything? *(consistent lenses enabled cross-item comparison; without them, eval is noise)*
+2. Are you assessing or already fixing? Keep them separate. *(audits that mixed assessment with fixing lost objectivity — assess first, fix in a separate phase)*
+3. Are the gaps you found material, or cosmetic? *(the sufficiency gate between assessment and action is the key decision — Evaluate always finds gaps, the question is whether they matter)*
+4. What are you assuming is NOT broken? *(audits that only checked known-risk areas missed adjacent failures — state your assumptions about what's healthy so they can be tested)*
+5. If evaluating N items — have you checked for patterns at the midpoint? *(midpoint checkpoints caught "abort early" signals half the campaigns missed)*
 
-### Pre-check
-- [ ] Artifact exists and is complete
-- [ ] Context understood (intent, constraints)
-
+```
 ### Lenses
 | Lens | Assessment | Issues |
 |------|------------|--------|
-|      |            |        |
-|      |            |        |
-|      |            |        |
-
-Common lenses: intent alignment, architecture, test quality, security,
-readability, edge cases, adversarial inputs, property invariants.
-
-- [ ] All relevant lenses assessed
-- [ ] Checkpoint: am I being thorough or just checking boxes?
 
 ### Verdict
-- **Decision:** [PASS/FAIL or APPROVE/REJECT]
-- **If reject, required changes:**
-- **If approve, caveats:**
+- **Decision:** [PASS/FAIL]
+- **If gaps found:** cosmetic or material?
 ```
 
-**Disciplines:**
-- Think adversarially: how could this fail? What assumptions are implicit?
-- Logic over style. Leave formatting to linters.
-- One-shot judgment. No iterative negotiation.
-- Spec-derived tests beat implementation-derived tests.
-
-**For systematic audits** (>3 lenses, like an 8-lens test suite review):
-cite file:line evidence per assessment. The verdict is a prioritized list of
-findings, not a single PASS/FAIL. Add a Sufficiency gate before acting on gaps.
-
----
-
-### Decide
-
-Options, comparison, commitment. For planning, architecture choices, tradeoffs.
-
-**For minor decisions, use inline format:**
-```
-- [ ] Decide: A is ___. B is ___. Choosing ___ because ___.
-```
-
-**For major decisions (hard to reverse, multiple stakeholders, architectural), use the full pattern:**
-
-```markdown
-## Decide: [what]
-
-### Context
-- **Why this decision now:**
-- **Constraints:**
-- **Reversibility:** [easy | hard | one-way]
-
-### Options
-| Option | Pros | Cons | Cost to try | Cost to undo |
-|--------|------|------|-------------|--------------|
-| A:     |      |      |             |              |
-| B:     |      |      |             |              |
-
-- [ ] At least 2 options with pros/cons
-- [ ] Critique: am I anchored on one option? What's the strongest case for the other?
-
-### Decision
-- **Chosen:**
-- **Primary reason:**
-- **What would make us revisit:**
-- [ ] Decision recorded
-```
-
-**Disciplines:**
-- Strongest counterevidence required, not just supporting evidence.
-- Fine decomposition for uncertain work, coarse for known patterns.
-- Each sub-task should be solvable in one session.
+For evaluation campaigns: scaffold per-item blocks, require midpoint checkpoint, require synthesis table.
 
 ---
 
@@ -280,17 +211,21 @@ Starter template, techniques, and reference example: [`ui-debug.md`](ui-debug.md
 
 Tasks rarely fit one pattern cleanly. Compose:
 
-- **Feature:** Decide (if multiple approaches) → Build → Evaluate (self-review)
-- **Bug fix:** Investigate → Build (the fix) → Evaluate (verify fix + no regression)
+- **Feature:** Build. If multiple approaches, add a Decide gate first.
+- **Bug fix:** Fix if cause is known. Investigate → Fix if not.
+- **Cleanup:** Fix (grep-verify-delete).
+- **Refactor:** Evaluate (current state) → Build → Evaluate (same behavior?)
 - **Research:** Investigate (rounds) → Decide (what to do with findings)
-- **Refactor:** Evaluate (current state) → Build (restructure) → Evaluate (same behavior?)
-- **Spike:** Decide (what to try) → Build (prototype) → Evaluate (feasible?)
-- **Incident:** Problem Summary → Investigate (triage) → Build (fix) → Evaluate (verify + no regression) → Build (harden)
-- **UI bug:** Build (attempt fix) → UI Debug (if fix fails — probe DOM, diagnose) → Build (targeted fix)
+- **Audit:** Evaluate (scan) → sufficiency gate → Fix (if gaps are material)
+- **Eval campaign:** Evaluate (per-input loop + midpoint checkpoint) → synthesis
+- **Port:** Investigate (inventory differences) → Build (copy+fix)
+- **Spike:** Build (prototype) → Evaluate (feasible?)
+- **Incident:** Investigate (triage) → Fix → Evaluate (no regression)
+- **UI bug:** Build (attempt) → UI Debug (if it fails) → Fix (targeted)
 
 Insert **Checkpoint** gates between pattern transitions. Insert **Critique** when shifting from investigation to implementation (the highest-risk transition — premature closure).
 
-**Evaluate → Build needs a sufficiency gate.** Before acting on gaps found during Evaluate, ask: "Is the gap worth closing, or is the current state sufficient?" Evaluate will always find gaps. The question is whether they matter enough to justify the cost of closing them. Add this gate between Verdict and Build: `- [ ] Sufficiency: gaps found are cosmetic / gaps materially affect correctness — action justified?`
+**Evaluate → Build/Fix needs a sufficiency gate.** Before acting on gaps found during Evaluate, ask: "Is the gap worth closing, or is the current state sufficient?" Evaluate will always find gaps. The question is whether they matter enough to justify the cost of closing them. Add this gate between Verdict and Build: `- [ ] Sufficiency: gaps found are cosmetic / gaps materially affect correctness — action justified?`
 
 **When redoing work:** Start with Critique of the previous attempt. One redo
 started by critiquing the prior attempt's shallow findings — that single gate
@@ -300,6 +235,34 @@ as the first attempt, just slower.
 **Customize checkpoint text.** Generic "is this working?" produces generic answers.
 Write task-specific checkpoint questions at task creation time (e.g., "what did
 depth reveal that sampling missed?" not just "approach working?").
+
+---
+
+## Type Calibration
+
+Before writing your Work Plan, ask:
+
+1. **Is the template heavier than the task?** Cleanup, bugfix (known cause),
+   UX polish, and small ops tasks don't need full Design Phase — just restate
+   what to do and the done condition. Match ceremony to weight.
+
+2. **What actually proves it worked?** Not everything is "all tests pass."
+   Cleanup → `grep -r` returns zero. UX polish → visual check or screenshot.
+   Ops → smoke test in the real environment. Eval campaign → synthesis table.
+   Port → grep for old environment references returns zero.
+
+3. **Is there a hidden phase the template doesn't show?** Ports need
+   investigate-before-copy. Doc extraction needs source capture before writing.
+   Audits need assess-then-decide-then-act. Unknown-cause bugs need
+   Investigate before Fix.
+
+4. **What could this break that isn't covered by my test gates?** Refactors →
+   do old tests still pass? Ops → does existing workflow still work? Format
+   changes → have all callers been updated?
+
+5. **Does judge earn its cost here?** High-value: >2 files touched, public
+   contracts (APIs, formats, CLI), eval campaign design, doc rewrites.
+   Low-value: ≤2 files, cosmetic changes, known-cause bugfixes.
 
 ---
 
@@ -330,6 +293,8 @@ After all work patterns complete, before code becomes permanent:
 - **Over-planning without validation.** One task planned 22 gates; the right answer was 2 lines of code. If you're writing 15+ gates without a Decide gate first, you're planning in the dark. Validate the approach before committing to a large plan.
 - **Working without a task.** Gates are invisible without a task file — this is the highest-leverage failure because everything downstream (reflection, checkpoints, gate echo) depends on a task existing. Create or activate a task before doing work.
 - **Overscoping.** The agent defaults to maximal scope; the user must constrain. Start with the smallest sample that answers the question. One analysis scoped from 82 files to 10 — and 10 was enough.
+- **Assumed root cause.** Jumping to a fix without confirming the cause. If it's not obvious, compose Investigate → Fix.
+- **Full ceremony for trivial changes.** 4 Design Phase gates for 5-line changes. Match template weight to task weight.
 
 ---
 
@@ -342,4 +307,4 @@ Format reference and generation guide for project mind maps (`MIND_MAP.md`).
 
 ---
 
-> Evidence base: patterns and anti-patterns derived from 14 tasks across 2 projects. Details: `.agent/tasks/084-workflow-pattern-analysis/findings.md`
+> Evidence base: patterns and anti-patterns derived from 322 tasks across 14 projects. Details: task 056 (task-type-taxonomy) behavioral observations.

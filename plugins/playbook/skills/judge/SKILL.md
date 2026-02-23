@@ -97,6 +97,7 @@ code and artifacts — cite file:line references, not hypotheticals.
 1. {specific question}
 2. {specific question}
 3. {specific question}
+4. What assumptions does this plan/implementation build on that aren't stated or verified?
 
 **Write your verdict to:** {output_path}
 
