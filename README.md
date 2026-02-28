@@ -26,18 +26,9 @@ Workflow enforcement makes the structure hold. The agent can't edit code without
 
 ```mermaid
 graph TD
-    A["1. TASK CREATION · human + agent
-    chat log research · restate intent
-    define done · scope/risks · work plan"] --> B["2. PLAN REVIEW · judge
-    intent aligned? · scope clear?
-    risks identified? · tests adequate?"]
-    B --> C["3. BUILD + TEST
-    step → test → step → test
-    checkpoint: adjust"]
-    C --> D["4. WORK REVIEW
-    tests pass? · no debris?
-    mind map updated? · intent satisfied?
-    → commit · → next task"]
+    A("<b>1. TASK CREATION</b><br/><i>human + agent</i><br/><br/>chat log research<br/>restate intent<br/>define done<br/>scope / risks<br/>work plan") --> B("<b>2. PLAN REVIEW</b><br/><i>judge</i><br/><br/>intent aligned?<br/>scope clear?<br/>risks identified?<br/>tests adequate?")
+    B --> C("<b>3. BUILD + TEST</b><br/><br/>step → test<br/>step → test<br/>checkpoint: adjust")
+    C --> D("<b>4. WORK REVIEW</b><br/><br/>tests pass?<br/>no debris?<br/>mind map updated?<br/>intent satisfied?<br/><br/>→ commit<br/>→ next task")
     D --> A
 ```
 
