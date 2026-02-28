@@ -36,7 +36,7 @@ Then in any project, tell the agent `/playbook:init`.
 
 ## The task lifecycle
 
-```
+```text
 ┌───────────────────┐         ┌────────────────────┐
 │  1. TASK CREATION │ ──────► │  2. PLAN REVIEW    │
 │  (human + agent)  │         │  (automated, judge)│
