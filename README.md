@@ -64,7 +64,26 @@ The sandbox is the other half of the safety equation. It wraps Claude in OS-leve
 claude plugin marketplace add horiacristescu/claude-playbook-plugin
 ```
 
-Then in any project, tell the agent `/playbook:init`.
+Then in any project, tell the agent `/playbook:init`. This creates `CLAUDE.md`, `MIND_MAP.md`, and the task CLI.
+
+## Usage
+
+Start a session — the agent reads the mind map and orients. Tell it what you want: "add user auth," "investigate the memory leak," "refactor the parser." It creates a task, writes a plan, gets it reviewed by the judge, then works through the gates.
+
+```
+tasks new feature user-auth        # create task
+tasks work 12                      # activate it — hooks start enforcing
+# ... agent works through task.md gates ...
+tasks work done                    # deactivate when finished
+```
+
+For autonomous work, run the agent in sandbox mode — bypass-permissions inside OS-level write containment:
+
+```
+sandbox                            # launches sandboxed Claude with --dangerously-skip-permissions
+```
+
+The sandbox agent can't touch `.git`, can't write outside your project, but runs without permission prompts. You steer by chatting — your messages arrive between steps.
 
 ## Two agents, one task
 
