@@ -2,39 +2,27 @@
 
 A Claude Code plugin that lets you grant your agent more autonomy — by making its work observable, aligned, and safe.
 
-## The idea
+## The problem
 
 You want your agent to handle substantial work independently. But autonomy without alignment produces drift — the agent builds the wrong thing, forgets context, skips verification. So you hold the reins tight and review everything, which defeats the purpose.
 
 The way out: give the agent structure that keeps it aligned, then let it run. Safety first (it can't break things), alignment second (it's working on what you asked), observability third (you can see what happened). With those in place, you can trust the agent with more.
 
-## How it works
+Three ideas make this work.
 
-**The task document** (`task.md`) is the central artifact. Everything orbits it. It captures your intent, the agent's plan, the execution trace, checkpoint reflections, and the judge's review — all in one file. The agent works through it step by step, recording what it finds. You can read it to see exactly where things stand. A judge agent can review it independently. Multiple agents across sessions can pick it up and continue. It's an intent document, a workbook, and an audit trail at the same time.
+## task.md — a scripting language for agents
+
+The task document is the central artifact. Everything orbits it.
+
+A task.md is a program that the agent executes. Gates are instructions. Checkboxes are the program counter. The agent works top to bottom: read gate, do work, check box with findings, next gate. The checked document IS the execution trace — you can read it at any point and know exactly where things stand.
+
+But it's more than a checklist. The same file captures your intent, the agent's plan, checkpoint reflections, and the judge's review. It's an intent document, a workbook, and an audit trail at the same time. A judge agent reviews the plan before work begins — it sees the codebase but not the conversation, so there's no anchoring or pressure to agree. Multiple agents across sessions can pick up the same task.md and continue where the last one left off.
+
+The plan and execution co-evolve through the document. The agent edits the plan as it learns — gates get annotated with findings, new steps get added when discoveries demand them, sections get removed when reality reveals they're unnecessary. You don't need a state machine when you have a document that tracks its own state.
 
 Tasks are the natural unit of work. "Add user authentication." "Fix the parser bug." "Investigate the memory leak." Small tasks are fine. Bash commands, doc edits, quick fixes don't need a task — the structure is for work that benefits from it.
 
-**Tests come first.** The plugin treats tests and documentation as more important than code. The agent writes tests before or alongside new features, not after. Tests are the agent's eyes — without them, it navigates blind. With them, you can grant more autonomy because consequences are observable in real time.
-
-**The mind map** (`MIND_MAP.md`) is the project's persistent memory. Architecture, decisions, context, reasoning — the things that get lost between sessions. The agent reads it at session start and updates it after completing work. Your twentieth session benefits from what was learned in the first. No more re-explaining the codebase.
-
-**The chat log** records every message you send with timestamps and IDs. You can trace what you asked for, when, and how the agent interpreted it. It's the accountability layer — drift becomes visible after the fact even if it wasn't caught in the moment.
-
-**Workflow enforcement.** The agent can't edit code without an active task. Can't skip steps. Can't call work done with steps left unchecked. These are system-level constraints, not suggestions — the agent cannot bypass them. This is what makes autonomy safe: the structure holds even when the agent's judgment doesn't.
-
-**The sandbox** wraps Claude in OS-level write containment. Your project directory is writable, `.git` is read-only, everything else is blocked at the kernel level. No Docker. The agent can't break what it can't reach. Even in sandbox mode, sessions stay interactive — you're always in the loop, observing and steering, not launching a headless process and hoping for the best.
-
-**The judge** is an independent agent that reviews a plan before work begins. It sees the codebase but not the conversation — no anchoring, no pressure to agree. It catches gaps the planning agent missed.
-
-## Install
-
-```
-claude plugin marketplace add horiacristescu/claude-playbook-plugin
-```
-
-Then in any project, tell the agent `/playbook:init`.
-
-## The task lifecycle
+Workflow enforcement makes the structure hold. The agent can't edit code without an active task. Can't skip steps. Can't call work done with steps left unchecked. These are system-level constraints, not suggestions — hooks block the action, not warn about it. A chat log records every message you send with timestamps and IDs, so drift becomes visible after the fact even if it wasn't caught in the moment.
 
 ```mermaid
 graph TD
@@ -53,9 +41,55 @@ graph TD
     D --> A
 ```
 
-The loop reads clockwise. Left column is language testing (is the intent right? is the result right?). Right column is execution testing (does the plan hold up? does the code work?). Review findings feed back into the next task.
-
 You can steer anytime — your messages arrive between steps. "Wrong approach," "skip that," "focus on X" — the agent adjusts the remaining steps.
+
+## The mind map — memory as a markdown graph
+
+`MIND_MAP.md` is the project's persistent memory. It's a flat list of numbered nodes with `[N]` cross-references — a graph structure in plain text. The agent reads it at session start and updates it after completing work. Your twentieth session benefits from what was learned in the first.
+
+Here's what a few nodes look like in practice:
+
+```
+[1] Project Overview — Claude Playbook packages an agent steering
+methodology as a distributable plugin [2]. The core insight: the solution
+to agent autonomy is text (templates, patterns, questions), not code
+(frameworks, state machines, containers) [18]. Empirically refined
+across 60+ tasks...
+
+[5] Task System — Each task is a folder containing a living document
+that IS the execution trace [19]. Design Phase → Work Plan → Pre-review.
+Task types map to playbook patterns: feature → Build, explore →
+Investigate, review → Evaluate...
+
+[13] Mind Map — Persistent knowledge graph in MIND_MAP.md. Routing
+nodes [1-4] serve as table of contents. Records WHY not just WHAT — the
+reasoning that can't be recovered from code alone...
+
+[19] Document-Driven Execution — A task.md is a complete computational
+model: checkboxes = state, sections = memory, templates = instruction
+set, agent = interpreter [5]. The final task.md is both the record of
+what happened and the program that drove it...
+```
+
+Every node links to related nodes. The agent can follow `[5]` from the overview to the task system details, then `[19]` to the execution model. No section headers, no hierarchy — just nodes and links. Grep-friendly, append-friendly, and it grows naturally as the project evolves. Architecture, decisions, context, reasoning — the things that get lost between sessions now persist across them.
+
+## Testing — the enabler of autonomy
+
+Tests aren't quality assurance. They're the mechanism that lets you grant more trust.
+
+Agents lack human intuition about whether code is working. Tests make consequences observable in real time. Without tests, the agent navigates blind. With tests, it perceives and adapts. The better the tests, the longer the agent can run unsupervised.
+
+The plugin treats tests and documentation as more important than code. The agent writes tests before or alongside new features, not after. This isn't a methodology preference — it's a prerequisite for autonomy. You can't safely let the agent run if you can't see what it's doing.
+
+The sandbox is the other half of the safety equation. It wraps Claude in OS-level write containment — your project directory is writable, `.git` is read-only, everything else is blocked at the kernel level. No Docker. Tests catch logical errors; the sandbox catches blast radius. Even in sandbox mode, sessions stay interactive — you're always in the loop, observing and steering, not launching a headless process and hoping for the best.
+
+## Install
+
+```
+claude plugin marketplace add horiacristescu/claude-playbook-plugin
+```
+
+Then in any project, tell the agent `/playbook:init`.
 
 ## Two agents, one task
 
