@@ -75,6 +75,8 @@ Every node links to related nodes. The agent can follow `[5]` from the overview 
 
 ## Testing — the enabler of autonomy
 
+<p align="center"><img src="assets/reactive_test_environment.png" width="600" alt="An AI agent in a go-kart racing inside concentric tire barriers labeled Unit Tests, Integration Tests, and E2E Tests, with a Safe Zone in the center"></p>
+
 Tests aren't quality assurance. They're the mechanism that lets you grant more trust.
 
 Agents lack human intuition about whether code is working. Tests make consequences observable in real time. Without tests, the agent navigates blind. With tests, it perceives and adapts. The better the tests, the longer the agent can run unsupervised.
