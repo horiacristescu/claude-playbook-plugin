@@ -40,7 +40,9 @@ You can steer anytime — your messages arrive between steps. "Wrong approach," 
 
 ## The mind map — memory as a markdown graph
 
-`MIND_MAP.md` is the project's persistent memory. It's a flat list of numbered nodes with `[N]` cross-references — a graph structure in plain text. The agent reads it at session start and updates it after completing work. Your twentieth session benefits from what was learned in the first.
+`MIND_MAP.md` is the project's persistent memory — a flat list of numbered nodes with `[N]` cross-references. A graph structure in plain text, kept under 10KB so the agent can load it whole at session start. Your twentieth session benefits from what was learned in the first.
+
+The format is designed for git: one line per node means clean diffs, easy grep, and append-only growth. No section headers, no hierarchy — just nodes and links. It tracks intent from the top down (what we're trying to build and why) and implementation from the bottom up (what we learned by building it). It's a router: the agent reads it to orient, follows cross-references to go deeper, and updates it after completing work.
 
 Here's what a few nodes look like in practice:
 
@@ -52,7 +54,7 @@ Here's what a few nodes look like in practice:
 >
 > **[19] Document-Driven Execution** — A task.md is a complete computational model: checkboxes = state, sections = memory, templates = instruction set, agent = interpreter **[5]**. The final task.md is both the record of what happened and the program that drove it...
 
-Every node links to related nodes. The agent can follow **[5]** from the overview to the task system details, then **[19]** to the execution model. No section headers, no hierarchy — just nodes and links. Grep-friendly, append-friendly, and it grows naturally as the project evolves. Architecture, decisions, context, reasoning — the things that get lost between sessions now persist across them.
+Every node links to related nodes. The agent can follow **[5]** from the overview to the task system details, then **[19]** to the execution model. Architecture, decisions, context, reasoning — the things that get lost between sessions now persist across them.
 
 ## Testing — the enabler of autonomy
 
