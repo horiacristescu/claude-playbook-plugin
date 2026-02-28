@@ -36,31 +36,42 @@ Then in any project, tell the agent `/playbook:init`.
 
 ## The task lifecycle
 
-```
-+-------------------+         +--------------------+
-|  1. TASK CREATION | ------> |  2. PLAN REVIEW    |
-|  (human + agent)  |         |  (automated, judge)|
-|                   |         |                    |
-|  chat log research|         |                    |
-|  restate intent   |         |  intent aligned?   |
-|  define "done"    |         |  scope clear?      |
-|  scope / risks    |         |  risks identified? |
-|  write work plan  |         |  tests adequate?   |
-+-------------------+         +---------+----------+
-          ^                             |
-          |                             v
-+-------------------+         +--------------------+
-|  4. WORK REVIEW   | <------ |  3. BUILD + TEST   |
-|  (automated)      |         |  (automated)       |
-|                   |         |                    |
-|  tests pass?      |         |  step --> test     |
-|  no debris?       |         |    |        |      |
-|  mind map updated?|         |    v     pass/fail |
-|  intent satisfied?|         |  step --> test     |
-|                   |         |    |               |
-|  --> commit       |         |  checkpoint:       |
-|  --> next task    |         |    adjust ------+  |
-+-------------------+         +--------------------+
+```mermaid
+graph LR
+    A["1. TASK CREATION
+    (human + agent)
+    ───
+    chat log research
+    restate intent
+    define 'done'
+    scope / risks
+    write work plan"] --> B["2. PLAN REVIEW
+    (automated, judge)
+    ───
+    intent aligned?
+    scope clear?
+    risks identified?
+    tests adequate?"]
+
+    B --> C["3. BUILD + TEST
+    (automated)
+    ───
+    step → test
+    step → test
+    checkpoint: adjust"]
+
+    C --> D["4. WORK REVIEW
+    (automated)
+    ───
+    tests pass?
+    no debris?
+    mind map updated?
+    intent satisfied?
+    ───
+    → commit
+    → next task"]
+
+    D --> A
 ```
 
 The loop reads clockwise. Left column is language testing (is the intent right? is the result right?). Right column is execution testing (does the plan hold up? does the code work?). Review findings feed back into the next task.
