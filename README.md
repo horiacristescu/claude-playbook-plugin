@@ -24,17 +24,7 @@ Tasks are the natural unit of work. "Add user authentication." "Fix the parser b
 
 Workflow enforcement makes the structure hold. The agent can't edit code without an active task. Can't skip steps. Can't call work done with steps left unchecked. These are system-level constraints, not suggestions — hooks block the action, not warn about it. A chat log records every message you send with timestamps and IDs, so drift becomes visible after the fact even if it wasn't caught in the moment.
 
-```mermaid
-graph TD
-    A("<b>1. TASK CREATION</b><br/><i>human + agent</i><br/><br/>chat log research<br/>restate intent<br/>define done<br/>scope / risks<br/>work plan") --> B("<b>2. PLAN REVIEW</b><br/><i>headless judge</i><br/><br/>intent aligned?<br/>scope clear?<br/>risks identified?<br/>tests adequate?")
-    B --> C("<b>3. BUILD + TEST</b><br/><i>yolo worker + chat steering</i><br/><br/>step → test<br/>step → test<br/>checkpoint: adjust")
-    C --> D("<b>4. WORK REVIEW</b><br/><i>headless judge</i><br/><br/>tests pass?<br/>no debris?<br/>mind map updated?<br/>intent satisfied?<br/><br/>→ commit<br/>→ next task")
-    D --> A
-    style A fill:#fee2e2,stroke:#dc2626,color:#000
-    style B fill:#dcfce7,stroke:#16a34a,color:#000
-    style C fill:#dcfce7,stroke:#16a34a,color:#000
-    style D fill:#dcfce7,stroke:#16a34a,color:#000
-```
+<p align="center"><img src="assets/task_lifecycle.png" width="700" alt="Task lifecycle: 1. Task Creation (human + agent), 2. Plan Review (headless judge), 3. Build + Test (yolo worker + chat steering), 4. Work Review (headless judge), then back to 1"></p>
 
 You can steer anytime — your messages arrive between steps. "Wrong approach," "skip that," "focus on X" — the agent adjusts the remaining steps.
 
