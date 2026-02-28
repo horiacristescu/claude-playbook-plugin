@@ -30,6 +30,10 @@ graph TD
     B --> C("<b>3. BUILD + TEST</b><br/><br/>step → test<br/>step → test<br/>checkpoint: adjust")
     C --> D("<b>4. WORK REVIEW</b><br/><br/>tests pass?<br/>no debris?<br/>mind map updated?<br/>intent satisfied?<br/><br/>→ commit<br/>→ next task")
     D --> A
+    style A fill:#fee2e2,stroke:#dc2626,color:#000
+    style B fill:#dcfce7,stroke:#16a34a,color:#000
+    style C fill:#dcfce7,stroke:#16a34a,color:#000
+    style D fill:#dcfce7,stroke:#16a34a,color:#000
 ```
 
 You can steer anytime — your messages arrive between steps. "Wrong approach," "skip that," "focus on X" — the agent adjusts the remaining steps.
