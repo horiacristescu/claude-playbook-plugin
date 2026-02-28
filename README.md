@@ -40,7 +40,7 @@ You can steer anytime — your messages arrive between steps. "Wrong approach," 
 
 ## The mind map — memory as a markdown graph
 
-`MIND_MAP.md` is the project's persistent memory — a flat list of numbered nodes with `[N]` cross-references. A graph structure in plain text, kept under 10KB so the agent can load it whole at session start. Your twentieth session benefits from what was learned in the first.
+`MIND_MAP.md` is the project's persistent memory — a flat list of numbered nodes with `[N]` cross-references. A graph structure in plain text, kept under 10KB so the agent can load it whole at session start. This makes bootstrap quick and cheap — the agent orients from the mind map instead of thrashing around the codebase. Your twentieth session benefits from what was learned in the first.
 
 The format is designed for git: one line per node means clean diffs, easy grep, and append-only growth. No section headers, no hierarchy — just nodes and links. It tracks intent from the top down (what we're trying to build and why) and implementation from the bottom up (what we learned by building it). It's a router: the agent reads it to orient, follows cross-references to go deeper, and updates it after completing work.
 
