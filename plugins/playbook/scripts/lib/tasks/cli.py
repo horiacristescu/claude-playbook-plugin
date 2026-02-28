@@ -75,6 +75,12 @@ def print_usage():
 
 
 def main():
+    # Force utf-8 on Windows where the default console encoding (cp1252) chokes on → and emoji.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     args = sys.argv[1:]
 
     if not args or args[0] in ("-h", "--help", "help"):
@@ -121,11 +127,15 @@ def main():
                             lines[i + 1] = "done\n"
                             task_file.write_text("".join(lines))
                             break
-                # Remove BOTH state files
-                if legacy_state.exists():
-                    legacy_state.unlink()
-                if session_state and session_state.exists():
-                    session_state.unlink()
+                # Remove all state files that reference this task (legacy + all per-session).
+                # PLAYBOOK_SESSION_ID is not set when called from Bash tool (only in hook
+                # context), so we can't rely on session_state alone — scan everything.
+                for sf in [legacy_state] + list(agent_dir.glob("current_state.*")):
+                    try:
+                        if sf.exists() and sf.read_text().strip() == prev_task:
+                            sf.unlink()
+                    except OSError:
+                        pass
                 print(f"Task {prev_task} done.")
             else:
                 print("No active task.")
