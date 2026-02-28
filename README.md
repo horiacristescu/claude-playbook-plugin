@@ -37,40 +37,19 @@ Then in any project, tell the agent `/playbook:init`.
 ## The task lifecycle
 
 ```mermaid
-graph LR
-    A["1. TASK CREATION
-    (human + agent)
-    ───
-    chat log research
-    restate intent
-    define 'done'
-    scope / risks
-    write work plan"] --> B["2. PLAN REVIEW
-    (automated, judge)
-    ───
-    intent aligned?
-    scope clear?
-    risks identified?
-    tests adequate?"]
-
+graph TD
+    A["1. TASK CREATION · human + agent
+    chat log research · restate intent
+    define done · scope/risks · work plan"] --> B["2. PLAN REVIEW · judge
+    intent aligned? · scope clear?
+    risks identified? · tests adequate?"]
     B --> C["3. BUILD + TEST
-    (automated)
-    ───
-    step → test
-    step → test
+    step → test → step → test
     checkpoint: adjust"]
-
     C --> D["4. WORK REVIEW
-    (automated)
-    ───
-    tests pass?
-    no debris?
-    mind map updated?
-    intent satisfied?
-    ───
-    → commit
-    → next task"]
-
+    tests pass? · no debris?
+    mind map updated? · intent satisfied?
+    → commit · → next task"]
     D --> A
 ```
 
