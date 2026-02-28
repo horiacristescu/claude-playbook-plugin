@@ -149,20 +149,26 @@ def main():
             tasks_dir = project_path / ".agent" / "tasks"
             matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
             if matches:
-                from tasks.core import _is_done, _extract_head_position
+                from tasks.core import _is_done
                 tf = matches[0]
                 done = _is_done(tf)
-                head = _extract_head_position(tf)
-                has_open = not head.startswith("(")
-                if done and has_open:
-                    print(f"Task {task_num} is done but has open gates. Set Status to 'pending' to reopen.", file=sys.stderr)
-                elif done:
-                    print(f"Task {task_num} is done (all gates complete).", file=sys.stderr)
+                if done:
+                    # Reopen: reset Status to in_progress so activation can proceed.
+                    lines = tf.read_text().splitlines(keepends=True)
+                    for i, line in enumerate(lines):
+                        if line.strip() == "## Status" and i + 1 < len(lines):
+                            lines[i + 1] = "in_progress\n"
+                            tf.write_text("".join(lines))
+                            break
+                    print(f"Note: task {task_num} was marked done — reopening.")
+                    task_file = tf
+                    # Fall through to activation below
                 else:
                     print(f"Task {task_num} has no open gates.", file=sys.stderr)
+                    sys.exit(1)
             else:
                 print(f"Task {task_num} not found", file=sys.stderr)
-            sys.exit(1)
+                sys.exit(1)
 
         # Write task number to current_state
         # Always write plain current_state (hooks fallback), plus per-session if set
@@ -523,6 +529,307 @@ def main():
             print(f"\nSaved: {judge_log.relative_to(project_path)}", flush=True)
 
         sys.exit(result.returncode)
+
+    elif cmd == "context":
+        if not cmd_args:
+            print("Error: 'context' requires a task number", file=sys.stderr)
+            print("Usage: tasks context <number>", file=sys.stderr)
+            sys.exit(1)
+
+        task_num = cmd_args[0]
+        if task_num.isdigit():
+            task_num = task_num.zfill(3)
+        project_path = find_project_root()
+
+        chat_log = project_path / ".agent" / "chat_log.md"
+        if not chat_log.exists():
+            print("No .agent/chat_log.md found.", file=sys.stderr)
+            sys.exit(1)
+
+        import re
+        open_tag = re.compile(r'^<!--\s*T' + re.escape(task_num) + r'\s*-->$')
+        close_tag = re.compile(r'^<!--\s*/T' + re.escape(task_num) + r'\s*-->$')
+
+        spans = []
+        current_span = []
+        inside = False
+        for line in chat_log.read_text().splitlines():
+            stripped = line.strip()
+            if not inside and open_tag.match(stripped):
+                inside = True
+                continue
+            elif inside and close_tag.match(stripped):
+                spans.append("\n".join(current_span))
+                current_span = []
+                inside = False
+                continue
+            if inside:
+                current_span.append(line)
+
+        # Handle unclosed span at end of file
+        if inside and current_span:
+            spans.append("\n".join(current_span))
+
+        if not spans:
+            print(f"No attributed messages for task {task_num}.", file=sys.stderr)
+            sys.exit(1)
+
+        # Token-efficient output: strip markdown boilerplate, one line per message
+        import re as _re
+        max_line = 200
+        msg_header = _re.compile(r'^\*\*\[(M\d+)\]\*\*.*')
+        gate_header = _re.compile(r'^\*\*\[G\d+:\d+\]\*\*.*')
+        for span in spans:
+            msg_id = None
+            msg_lines = []
+            in_gate = False
+            for line in span.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped == "---":
+                    in_gate = False
+                    continue
+                if gate_header.match(stripped):
+                    in_gate = True
+                    continue
+                if in_gate:
+                    continue
+                m = msg_header.match(stripped)
+                if m:
+                    # Flush previous message
+                    if msg_id and msg_lines:
+                        text = " ".join(msg_lines)
+                        if len(text) > max_line:
+                            text = text[:max_line] + "..."
+                        print(f"[{msg_id}] {text}")
+                    msg_id = m.group(1)
+                    msg_lines = []
+                else:
+                    msg_lines.append(stripped)
+            # Flush last message
+            if msg_id and msg_lines:
+                text = " ".join(msg_lines)
+                if len(text) > max_line:
+                    text = text[:max_line] + "..."
+                print(f"[{msg_id}] {text}")
+
+    elif cmd == "timeline":
+        project_path = find_project_root()
+        bash_history = project_path / ".agent" / "bash_history"
+        if not bash_history.exists():
+            print("No .agent/bash_history found.", file=sys.stderr)
+            sys.exit(1)
+
+        import re
+        # Match: timestamp | AGENT/SCRIPT | tasks work/new/done ...
+        pattern = re.compile(
+            r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| \w+ \| '
+            r'(?:.*/)?(tasks (?:work|new) .+)$'
+        )
+        seen = set()
+        for line in bash_history.read_text().splitlines():
+            m = pattern.match(line)
+            if m:
+                cmd = m.group(2)
+                # Deduplicate AGENT+SCRIPT echoes (same command within 2 lines)
+                if cmd not in seen:
+                    seen.add(cmd)
+                    print(f"{m.group(1)}  {cmd}")
+                else:
+                    seen.discard(cmd)
+
+    elif cmd == "tagger":
+        project_path = find_project_root()
+        chat_log = project_path / ".agent" / "chat_log.md"
+        bash_history = project_path / ".agent" / "bash_history"
+        if not chat_log.exists():
+            print("No .agent/chat_log.md found.", file=sys.stderr)
+            sys.exit(1)
+        if not bash_history.exists():
+            print("No .agent/bash_history found.", file=sys.stderr)
+            sys.exit(1)
+
+        import re
+
+        # 1. Parse messages from chat_log.md: (timestamp, msg_id, text)
+        msg_header = re.compile(
+            r'^\*\*\[(M\d+)\]\*\* \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\]'
+        )
+        gate_header = re.compile(r'^\*\*\[G\d+:\d+\]\*\*')
+        entries = []  # (timestamp_str, sort_key, display_line)
+        max_line = 200
+
+        msg_id = None
+        msg_ts = None
+        msg_lines = []
+        in_gate = False
+
+        def flush_msg():
+            if msg_id and msg_lines:
+                text = " ".join(msg_lines)
+                if len(text) > max_line:
+                    text = text[:max_line] + "..."
+                entries.append((msg_ts, 0, f"[{msg_id}] {text}"))
+
+        for line in chat_log.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped == "---":
+                in_gate = False
+                continue
+            if gate_header.match(stripped):
+                in_gate = True
+                continue
+            if in_gate:
+                continue
+            m = msg_header.match(stripped)
+            if m:
+                flush_msg()
+                msg_id = m.group(1)
+                msg_ts = m.group(2)
+                msg_lines = []
+            elif stripped.startswith("<!--"):
+                continue  # skip attribution tags / comments
+            else:
+                msg_lines.append(stripped)
+
+        flush_msg()
+
+        # 2. Parse task transitions from bash_history
+        task_pattern = re.compile(
+            r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| \w+ \| '
+            r'(?:.*/)?(tasks (?:work|new) .+)$'
+        )
+        seen = set()
+        for line in bash_history.read_text().splitlines():
+            m = task_pattern.match(line)
+            if m:
+                task_cmd = m.group(2)
+                if task_cmd not in seen:
+                    seen.add(task_cmd)
+                    entries.append((m.group(1), 1, f"--- {task_cmd} ---"))
+                else:
+                    seen.discard(task_cmd)
+
+        # 3. Sort by timestamp, then task transitions before messages (sort_key: 1 before 0)
+        #    Actually: task transitions AFTER messages at same timestamp makes more sense
+        #    But transitions should come BEFORE subsequent messages — sort_key 1 means
+        #    transitions sort after messages at same second. That's fine: the transition
+        #    happened between messages.
+        entries.sort(key=lambda e: (e[0], e[1]))
+
+        # 4. Output
+        for _, _, display in entries:
+            print(display)
+
+    elif cmd == "tag":
+        dry_run = "--dry-run" in cmd_args
+        project_path = find_project_root()
+        chat_log = project_path / ".agent" / "chat_log.md"
+        bash_history = project_path / ".agent" / "bash_history"
+        if not chat_log.exists():
+            print("No .agent/chat_log.md found.", file=sys.stderr)
+            sys.exit(1)
+        if not bash_history.exists():
+            print("No .agent/bash_history found.", file=sys.stderr)
+            sys.exit(1)
+
+        import re
+        from bisect import bisect_right
+
+        # 1. Build sorted task transition list from bash_history
+        #    Each entry: (timestamp, active_task_or_None)
+        task_pattern = re.compile(
+            r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| \w+ \| '
+            r'(?:.*/)?(tasks (?:work|new) .+)$'
+        )
+        work_re = re.compile(r'tasks work (\d+)')
+        transitions = []  # [(timestamp, task_num_or_None)]
+        seen = set()
+        for line in bash_history.read_text().splitlines():
+            m = task_pattern.match(line)
+            if m:
+                task_cmd = m.group(2)
+                if task_cmd not in seen:
+                    seen.add(task_cmd)
+                else:
+                    seen.discard(task_cmd)
+                    continue
+                ts = m.group(1)
+                if "work done" in task_cmd:
+                    transitions.append((ts, None))
+                else:
+                    wm = work_re.search(task_cmd)
+                    if wm:
+                        transitions.append((ts, wm.group(1).zfill(3)))
+        transitions.sort(key=lambda t: t[0])
+        trans_times = [t[0] for t in transitions]
+
+        def active_task_at(ts):
+            """Return task number active at timestamp ts, or None."""
+            idx = bisect_right(trans_times, ts) - 1
+            if idx < 0:
+                return None
+            return transitions[idx][1]
+
+        # 2. Scan chat_log.md, find message headers with timestamps,
+        #    insert tags at task transition points
+        msg_header = re.compile(
+            r'^(\*\*\[(M\d+)\]\*\* \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\])'
+        )
+        # Also detect existing tags to avoid double-tagging
+        existing_tag = re.compile(r'^<!--\s*/?T\d+\s*-->$')
+
+        lines = chat_log.read_text().splitlines(keepends=True)
+        output = []
+        current_tag = None  # currently open tag (task number)
+        tags_inserted = 0
+
+        for line in lines:
+            stripped = line.strip()
+            # Skip existing attribution tags (we'll rewrite them)
+            if existing_tag.match(stripped):
+                continue
+
+            m = msg_header.match(stripped)
+            if m:
+                msg_id = m.group(2)
+                msg_ts = m.group(3)
+                task = active_task_at(msg_ts)
+
+                if task != current_tag:
+                    # Close previous tag if open
+                    if current_tag is not None:
+                        output.append(f"<!-- /T{current_tag} -->\n")
+                        output.append("\n")
+                        tags_inserted += 1
+                    # Open new tag if task is active
+                    if task is not None:
+                        output.append(f"<!-- T{task} -->\n")
+                        output.append("\n")
+                        tags_inserted += 1
+                    current_tag = task
+
+            output.append(line)
+
+        # Close final tag if still open
+        if current_tag is not None:
+            output.append(f"\n<!-- /T{current_tag} -->\n")
+            tags_inserted += 1
+
+        if dry_run:
+            print(f"Would insert {tags_inserted} tags into chat_log.md")
+            # Show first few transitions
+            current_tag = None
+            for line in output:
+                stripped = line.strip()
+                if existing_tag.match(stripped):
+                    print(f"  {stripped}")
+        else:
+            chat_log.write_text("".join(output))
+            print(f"Inserted {tags_inserted} tags into chat_log.md")
 
     elif cmd == "status":
         project_path = find_project_root()

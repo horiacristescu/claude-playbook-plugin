@@ -43,6 +43,7 @@ case "$(uname -s)" in
         (require-not (subpath \"/var/folders\"))
         (require-not (subpath \"/private/var/folders\"))
         (require-not (regex #\"^$HOME_DIR/\\.claude\"))
+        (require-not (subpath \"$HOME_DIR/.cache\"))
         (require-not (subpath \"$HOME_DIR/.local\"))
         (require-not (subpath \"$HOME_DIR/Library\"))
         (require-not (subpath \"/dev\"))
@@ -57,7 +58,10 @@ case "$(uname -s)" in
         echo ""
         # Redirect tool caches to /tmp — Claude Code's inner sandbox blocks ~/.cache
         export UV_CACHE_DIR="/tmp/uv-cache"
-        exec sandbox-exec -p "$PROFILE" claude --dangerously-skip-permissions "$@"
+        exec sandbox-exec -p "$PROFILE" claude \
+            --dangerously-skip-permissions \
+            --settings .claude/sandbox-hooks.json \
+            "$@"
         ;;
 
     Linux)

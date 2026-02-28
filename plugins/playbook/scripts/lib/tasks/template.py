@@ -63,6 +63,12 @@ def design_phase_intro() -> str:
 > (The `/playbook` skill has workflow patterns if you need a reference.)"""
 
 
+def chat_log_research() -> str:
+    return """\
+### Chat Log Research
+- [ ] Scan for user context: Run `tasks context <N>` to get attributed messages. If no results, scan recent chat: `grep -E '^\\*\\*\\[M' .agent/chat_log.md | tail -20 | sed 's/\\*\\*//g' | cut -c -200`. Pull useful details — user quotes, constraints, context — into the References section above. The user's actual words are the ground truth for Intent."""
+
+
 def understand() -> str:
     return """\
 ### Understand
@@ -101,6 +107,7 @@ def design_phase() -> str:
     """Compose all design phase subsections."""
     parts = [
         design_phase_intro(),
+        chat_log_research(),
         understand(),
         structure(),
         reflection_gates(),
@@ -159,11 +166,23 @@ def judge_prompt(task_path: str, inline_context: bool = False,
     """
     context_location = "provided below" if inline_context else "provided in your system prompt"
 
+    # Extract task number from path (e.g. .agent/tasks/042-foo/task.md -> 042)
+    import re as _re
+    _tn = _re.search(r'/(\d{3})-', task_path)
+    task_number = _tn.group(1) if _tn else None
+    intent_check = ""
+    if task_number:
+        intent_check = (
+            f"If .agent/chat_log.md exists, run `tasks context {task_number}` to see the user's original messages. "
+            "Check whether the task addresses what the user actually asked for, not just the agent's interpretation. "
+        )
+
     if mode == "impl":
         return (
             "You are a senior engineer reviewing a COMPLETED implementation. "
             f"The MIND_MAP.md and task.md are {context_location}. "
             "Read the source files changed by this task (look at the Work Plan gates for paths). "
+            f"{intent_check}"
             "Review through four lenses: "
             "(1) Simplify — what's unnecessary or over-engineered? What can be removed? "
             "(2) Self-critique — does the code actually fulfill the stated Intent? What would a skeptic say? "
@@ -180,6 +199,7 @@ def judge_prompt(task_path: str, inline_context: bool = False,
         "You are a senior engineer reviewing a PLAN — no code has been written yet. "
         f"The MIND_MAP.md and task.md are {context_location}. "
         "Read the source files referenced in the plan to understand existing patterns. "
+        f"{intent_check}"
         "Then critique the plan through four lenses: "
         "(1) Intent alignment — will this approach actually fulfill the stated Intent? What's missing or underspecified? "
         "(2) Failure modes — what will go wrong that isn't addressed? Construct a concrete failing scenario. "
