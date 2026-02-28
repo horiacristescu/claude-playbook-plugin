@@ -36,31 +36,31 @@ Then in any project, tell the agent `/playbook:init`.
 
 ## The task lifecycle
 
-```text
-┌───────────────────┐         ┌────────────────────┐
-│  1. TASK CREATION │ ──────► │  2. PLAN REVIEW    │
-│  (human + agent)  │         │  (automated, judge)│
-│                   │         │                    │
-│  chat log research│         │                    │
-│  restate intent   │         │  intent aligned?   │
-│  define "done"    │         │  scope clear?      │
-│  scope / risks    │         │  risks identified? │
-│  write work plan  │         │  tests adequate?   │
-└───────────────────┘         └─────────┬──────────┘
-          ▲                             │
-          │                             ▼
-┌───────────────────┐         ┌────────────────────┐
-│  4. WORK REVIEW   │ ◄────── │  3. BUILD + TEST   │
-│  (automated)      │         │  (automated)       │
-│                   │         │                    │
-│  tests pass?      │         │  step ──► test     │
-│  no debris?       │         │    │        │      │
-│  mind map updated?│         │    ▼     pass/fail │
-│  intent satisfied?│         │  step ──► test     │
-│                   │         │    │               │
-│  ──► commit       │         │  checkpoint:       │
-│  ──► next task    │         │    adjust ──────┘  │
-└───────────────────┘         └────────────────────┘
+```
++-------------------+         +--------------------+
+|  1. TASK CREATION | ------> |  2. PLAN REVIEW    |
+|  (human + agent)  |         |  (automated, judge)|
+|                   |         |                    |
+|  chat log research|         |                    |
+|  restate intent   |         |  intent aligned?   |
+|  define "done"    |         |  scope clear?      |
+|  scope / risks    |         |  risks identified? |
+|  write work plan  |         |  tests adequate?   |
++-------------------+         +---------+----------+
+          ^                             |
+          |                             v
++-------------------+         +--------------------+
+|  4. WORK REVIEW   | <------ |  3. BUILD + TEST   |
+|  (automated)      |         |  (automated)       |
+|                   |         |                    |
+|  tests pass?      |         |  step --> test     |
+|  no debris?       |         |    |        |      |
+|  mind map updated?|         |    v     pass/fail |
+|  intent satisfied?|         |  step --> test     |
+|                   |         |    |               |
+|  --> commit       |         |  checkpoint:       |
+|  --> next task    |         |    adjust ------+  |
++-------------------+         +--------------------+
 ```
 
 The loop reads clockwise. Left column is language testing (is the intent right? is the result right?). Right column is execution testing (does the plan hold up? does the code work?). Review findings feed back into the next task.
