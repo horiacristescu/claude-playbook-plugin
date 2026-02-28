@@ -44,27 +44,13 @@ You can steer anytime — your messages arrive between steps. "Wrong approach," 
 
 Here's what a few nodes look like in practice:
 
-```markdown
-[1] Project Overview — Claude Playbook packages an agent steering
-methodology as a distributable plugin [2]. The core insight: the solution
-to agent autonomy is text (templates, patterns, questions), not code
-(frameworks, state machines, containers) [18]. Empirically refined
-across 60+ tasks...
-
-[5] Task System — Each task is a folder containing a living document
-that IS the execution trace [19]. Design Phase → Work Plan → Pre-review.
-Task types map to playbook patterns: feature → Build, explore →
-Investigate, review → Evaluate...
-
-[13] Mind Map — Persistent knowledge graph in MIND_MAP.md. Routing
-nodes [1-4] serve as table of contents. Records WHY not just WHAT — the
-reasoning that can't be recovered from code alone...
-
-[19] Document-Driven Execution — A task.md is a complete computational
-model: checkboxes = state, sections = memory, templates = instruction
-set, agent = interpreter [5]. The final task.md is both the record of
-what happened and the program that drove it...
-```
+> **[1] Project Overview** — Claude Playbook packages an agent steering methodology as a distributable plugin **[2]**. The core insight: the solution to agent autonomy is text (templates, patterns, questions), not code (frameworks, state machines, containers) **[18]**. Empirically refined across 60+ tasks...
+>
+> **[5] Task System** — Each task is a folder containing a living document that IS the execution trace **[19]**. Design Phase → Work Plan → Pre-review. Task types map to playbook patterns: feature → Build, explore → Investigate, review → Evaluate...
+>
+> **[13] Mind Map** — Persistent knowledge graph in MIND_MAP.md. Routing nodes **[1-4]** serve as table of contents. Records WHY not just WHAT — the reasoning that can't be recovered from code alone...
+>
+> **[19] Document-Driven Execution** — A task.md is a complete computational model: checkboxes = state, sections = memory, templates = instruction set, agent = interpreter **[5]**. The final task.md is both the record of what happened and the program that drove it...
 
 Every node links to related nodes. The agent can follow **[5]** from the overview to the task system details, then **[19]** to the execution model. No section headers, no hierarchy — just nodes and links. Grep-friendly, append-friendly, and it grows naturally as the project evolves. Architecture, decisions, context, reasoning — the things that get lost between sessions now persist across them.
 
