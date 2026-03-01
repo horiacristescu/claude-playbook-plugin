@@ -13,7 +13,13 @@ Investigate, Evaluate, Decide, UI Debug.
 
 ## Instructions
 
-Read the full playbook skill from skills/playbook/SKILL.md.
+First, check if this project has been initialized: look for `CLAUDE.md` at the project root AND `.agent/tasks/` directory. If either is missing, tell the user:
+
+> This project hasn't been initialized yet. Run `/init` to set up the playbook workflow (creates CLAUDE.md, MIND_MAP.md, and the task CLI).
+
+Then stop - don't show patterns for an uninitialized project.
+
+If the project IS initialized, read the full playbook skill from skills/playbook/SKILL.md.
 
 If the user specified a pattern name, show that pattern's details.
 If no argument, show the pattern overview and ask which one they need.
