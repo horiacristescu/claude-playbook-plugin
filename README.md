@@ -30,7 +30,7 @@ Everything else exists to serve the task lifecycle.
 
 **The mind map** (`MIND_MAP.md`) orients the agent before it creates a task. A flat list of numbered nodes with `[N]` cross-references — a knowledge graph in plain text, kept under 10KB. One line per node means clean diffs, easy grep, and append-only growth. It tracks intent from the top down (what we're building and why) and implementation from the bottom up (what we learned by building it). The agent loads it at session start and knows the project in seconds instead of thrashing around the codebase. Your thirtieth session benefits from what was learned in the first.
 
-**The judge** reviews the task plan before work begins. It sees the full codebase but not your conversation — no anchoring, no social pressure to agree. Running multiple rounds with human curation between them produces progressively better plans: in testing, three rounds at ~$2 each caught bugs that would have cost more to debug during implementation.
+**The judge** reviews the task plan before work begins. It sees the full codebase but not your conversation — no anchoring, no social pressure to agree. On complex tasks, run multiple rounds with human curation between them — each round produces a better plan. You're the stopping function: keep going until the plan feels right.
 
 **The chat log** records every message you send with timestamps and IDs. A design-phase gate cross-references it against the task — checking that the task captures everything you said and pulling in details mentioned conversationally but never formalized. This is intent alignment: your messages are one ledger, the task is the other, and they have to balance.
 
