@@ -73,7 +73,7 @@ The intended setup splits planning from execution. The **orchestrator** runs out
 
 ## The mind map in practice
 
-> **[1] Project Overview** — Claude Playbook packages an agent steering methodology as a distributable plugin **[2]**. The core insight: the solution to agent autonomy is text, not code **[18]**. Refined across 60+ tasks...
+> **[1] Project Overview** — Claude Playbook packages an agent steering methodology as a distributable plugin **[2]**. The core insight: the solution to agent autonomy is text, not code **[18]**. Refined across 300+ tasks...
 >
 > **[5] Task System** — Each task is a living document that IS the execution trace **[19]**. Design Phase → Work Plan → Pre-review. Task types: feature → Build, explore → Investigate, review → Evaluate...
 >
@@ -85,4 +85,4 @@ The agent follows links — **[5]** from the overview reaches the task system, *
 
 Quick questions, one-line fixes, shell commands, doc tweaks. The structure is for work that benefits from it — features, refactors, investigations, multi-file changes. Anything where you'd want to say "build this" rather than watch every keystroke.
 
-Refined across 60+ tasks on a real codebase.
+Refined across 300+ tasks on multiple codebases — macOS, Linux, and Windows.
