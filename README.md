@@ -1,6 +1,6 @@
 # Claude Playbook
 
-A Claude Code plugin for granting your agent real autonomy — the kind where you say "build this" and check back in an hour.
+A Claude Code plugin for granting your agent real autonomy — the kind where you say "build this" and check back in 20 minutes.
 
 ## What it looks like
 
