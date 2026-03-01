@@ -1,62 +1,44 @@
 # Claude Playbook
 
-A Claude Code plugin that lets you grant your agent more autonomy — by making its work observable, aligned, and safe.
+A Claude Code plugin for granting your agent real autonomy — the kind where you say "build this" and check back in an hour.
 
-## The problem
+## What it looks like
 
-You want your agent to handle substantial work independently. But autonomy without alignment produces drift — the agent builds the wrong thing, forgets context, skips verification. So you hold the reins tight and review everything, which defeats the purpose.
+```
+You:    "Add rate limiting to the API endpoints"
+Agent:  creates task, writes a 12-gate plan
+Judge:  reviews the plan blind (no conversation access — no anchoring)
+Agent:  works gate by gate, checking boxes, annotating findings
+You:    (45 minutes later) read the task.md, see exactly what happened and why
+```
 
-The way out: give the agent structure that keeps it aligned, then let it run. Safety first (it can't break things), alignment second (it's working on what you asked), observability third (you can see what happened). With those in place, you can trust the agent with more.
+## Everything is a task
 
-Three ideas make this work.
+All activity gravitates around task.md files. A task.md is a first-class object — value, program, and self-inspector at once. You can execute it (the agent works through gates top to bottom), pass it between agents (a fresh session picks it up and continues), analyze it (the judge reviews the plan blind), chain operations on it (create → judge → build → review → judge again), and cross-reference it against your original messages for intent alignment.
 
-## task.md — a scripting language for agents
+Each operation takes the file, transforms it — adds judge findings, checks gates, annotates discoveries, flags misalignments — and yields the enriched file to the next operation. The task.md accumulates everything as it flows through the pipeline. When it's done, it's both the record of what happened and the program that drove it.
 
-The task document is the central artifact. Everything orbits it.
+The plan and execution co-evolve through the document. The agent edits the plan as it learns — gates get annotated, steps added or removed as reality demands. Reflection gates make the task introspect itself mid-execution: "Am I solving the stated problem or a different one?" reshapes the remaining plan from inside. You steer anytime by chatting — "wrong approach," "skip that," "focus on X" — your messages arrive between gates.
 
-A task.md is a program that the agent executes. Gates are instructions. Checkboxes are the program counter. The agent works top to bottom: read gate, do work, check box with findings, next gate. The checked document IS the execution trace — you can read it at any point and know exactly where things stand.
+Most agent tools manage tasks as inert data — a list, a database row, a checklist something external acts on. These tasks are live. They run, get judged, reflect on themselves, pass between agents, and accumulate the full reasoning history as they go.
 
-But it's more than a checklist. The same file captures your intent, the agent's plan, checkpoint reflections, and the judge's review. It's an intent document, a workbook, and an audit trail at the same time. A judge agent reviews the plan before work begins — it sees the codebase but not the conversation, so there's no anchoring or pressure to agree. Multiple agents across sessions can pick up the same task.md and continue where the last one left off.
+<p align="center"><img src="assets/task_lifecycle.png" width="700" alt="Task lifecycle: 1. Task Creation (human + agent), 2. Plan Review (headless judge), 3. Build + Test (worker + chat steering), 4. Work Review (headless judge), then back to 1"></p>
 
-The plan and execution co-evolve through the document. The agent edits the plan as it learns — gates get annotated with findings, new steps get added when discoveries demand them, sections get removed when reality reveals they're unnecessary. You don't need a state machine when you have a document that tracks its own state.
+## What orbits the task
 
-Tasks are the natural unit of work. "Add user authentication." "Fix the parser bug." "Investigate the memory leak." Small tasks are fine. Bash commands, doc edits, quick fixes don't need a task — the structure is for work that benefits from it.
+Everything else exists to serve the task lifecycle.
 
-Workflow enforcement makes the structure hold. The agent can't edit code without an active task. Can't skip steps. Can't call work done with steps left unchecked. These are system-level constraints, not suggestions — hooks block the action, not warn about it. A chat log records every message you send with timestamps and IDs, so drift becomes visible after the fact even if it wasn't caught in the moment.
+**The mind map** (`MIND_MAP.md`) orients the agent before it creates a task. A flat list of numbered nodes with `[N]` cross-references — a knowledge graph in plain text, kept under 10KB. One line per node means clean diffs, easy grep, and append-only growth. It tracks intent from the top down (what we're building and why) and implementation from the bottom up (what we learned by building it). The agent loads it at session start and knows the project in seconds instead of thrashing around the codebase. Your thirtieth session benefits from what was learned in the first.
 
-<p align="center"><img src="assets/task_lifecycle.png" width="700" alt="Task lifecycle: 1. Task Creation (human + agent), 2. Plan Review (headless judge), 3. Build + Test (yolo worker + chat steering), 4. Work Review (headless judge), then back to 1"></p>
+**The judge** reviews the task plan before work begins. It sees the full codebase but not your conversation — no anchoring, no social pressure to agree. Running multiple rounds with human curation between them produces progressively better plans: in testing, three rounds at ~$2 each caught bugs that would have cost more to debug during implementation.
 
-You can steer anytime — your messages arrive between steps. "Wrong approach," "skip that," "focus on X" — the agent adjusts the remaining steps.
+**The chat log** records every message you send with timestamps and IDs. A design-phase gate cross-references it against the task — checking that the task captures everything you said and pulling in details mentioned conversationally but never formalized. This is intent alignment: your messages are one ledger, the task is the other, and they have to balance.
 
-## The mind map — memory as a markdown graph
+**Hooks** are the physics. The agent can't edit code without an active task. Can't skip gates. Can't call work done with gates left unchecked. These block the action at the system level — warnings had a 2.7% correction rate across 612 observations, so we don't warn.
 
-`MIND_MAP.md` is the project's persistent memory — a flat list of numbered nodes with `[N]` cross-references. A graph structure in plain text, kept under 10KB so the agent can load it whole at session start. This makes bootstrap quick and cheap — the agent orients from the mind map instead of thrashing around the codebase. Your twentieth session benefits from what was learned in the first.
-
-The format is designed for git: one line per node means clean diffs, easy grep, and append-only growth. No section headers, no hierarchy — just nodes and links. It tracks intent from the top down (what we're trying to build and why) and implementation from the bottom up (what we learned by building it). It's a router: the agent reads it to orient, follows cross-references to go deeper, and updates it after completing work.
-
-Here's what a few nodes look like in practice:
-
-> **[1] Project Overview** — Claude Playbook packages an agent steering methodology as a distributable plugin **[2]**. The core insight: the solution to agent autonomy is text (templates, patterns, questions), not code (frameworks, state machines, containers) **[18]**. Empirically refined across 60+ tasks...
->
-> **[5] Task System** — Each task is a folder containing a living document that IS the execution trace **[19]**. Design Phase → Work Plan → Pre-review. Task types map to playbook patterns: feature → Build, explore → Investigate, review → Evaluate...
->
-> **[13] Mind Map** — Persistent knowledge graph in MIND_MAP.md. Routing nodes **[1-4]** serve as table of contents. Records WHY not just WHAT — the reasoning that can't be recovered from code alone...
->
-> **[19] Document-Driven Execution** — A task.md is a complete computational model: checkboxes = state, sections = memory, templates = instruction set, agent = interpreter **[5]**. The final task.md is both the record of what happened and the program that drove it...
-
-Every node links to related nodes. The agent can follow **[5]** from the overview to the task system details, then **[19]** to the execution model. Architecture, decisions, context, reasoning — the things that get lost between sessions now persist across them.
-
-## Testing — the enabler of autonomy
+**Tests and the sandbox** are the two halves of the safety equation. Tests make consequences observable to the agent in real time — without them, it navigates blind. With them, it perceives and adapts. The better the tests, the longer the agent can run unsupervised. The sandbox wraps the agent in OS-level write containment — your project directory is writable, `.git` is read-only, everything else is blocked at the kernel level. No Docker. Tests catch logical errors; the sandbox catches blast radius.
 
 <p align="center"><img src="assets/reactive_test_environment.png" width="600" alt="An AI agent in a go-kart racing inside concentric tire barriers labeled Unit Tests, Integration Tests, and E2E Tests, with a Safe Zone in the center"></p>
-
-Tests aren't quality assurance. They're the mechanism that lets you grant more trust.
-
-Agents lack human intuition about whether code is working. Tests make consequences observable in real time. Without tests, the agent navigates blind. With tests, it perceives and adapts. The better the tests, the longer the agent can run unsupervised.
-
-The plugin treats tests and documentation as more important than code. The agent writes tests before or alongside new features, not after. This isn't a methodology preference — it's a prerequisite for autonomy. You can't safely let the agent run if you can't see what it's doing.
-
-The sandbox is the other half of the safety equation. It wraps Claude in OS-level write containment — your project directory is writable, `.git` is read-only, everything else is blocked at the kernel level. No Docker. Tests catch logical errors; the sandbox catches blast radius. Even in sandbox mode, sessions stay interactive — you're always in the loop, observing and steering, not launching a headless process and hoping for the best.
 
 ## Install
 
@@ -68,29 +50,39 @@ Then in any project, tell the agent `/playbook:init`. This creates `CLAUDE.md`, 
 
 ## Usage
 
-Start a session — the agent reads the mind map and orients. Tell it what you want: "add user auth," "investigate the memory leak," "refactor the parser." It creates a task, writes a plan, gets it reviewed by the judge, then works through the gates.
+Tell the agent what you want. It creates a task, writes a plan, gets the plan reviewed, then works through the gates.
 
 ```
 tasks new feature user-auth        # create task
-tasks work 12                      # activate it — hooks start enforcing
-# ... agent works through task.md gates ...
+tasks work 12                      # activate — hooks start enforcing
+# ... agent works through gates ...
 tasks work done                    # deactivate when finished
 ```
 
-For autonomous work, run the agent in sandbox mode — bypass-permissions inside OS-level write containment:
+For hands-off work, run in sandbox mode — bypass-permissions inside OS-level containment:
 
 ```
-sandbox                            # launches sandboxed Claude with --dangerously-skip-permissions
+sandbox
 ```
 
-The sandbox agent can't touch `.git`, can't write outside your project, but runs without permission prompts. You steer by chatting — your messages arrive between steps.
+The sandbox agent runs without permission prompts but can't touch `.git` or write outside your project. You still steer by chatting.
 
 ## Two agents, one task
 
-The intended setup uses two agents working from the same task document. The **orchestrator** runs outside the sandbox — it dishes out work, writes the plan, reviews the result, and commits. The **sandbox agent** runs in bypass-permissions mode inside the seatbelt — it picks up the task.md as its guide and does the implementation and judging. The task document is the handoff point: the orchestrator writes the plan, the sandbox agent executes against it, the orchestrator accepts or pushes back on the result.
+The intended setup splits planning from execution. The **orchestrator** runs outside the sandbox — writes plans, reviews results, commits. The **sandbox agent** runs in bypass mode — picks up the task.md and implements against it. The document is the handoff point. Multiple agents across sessions can pick up the same task and continue where the last one left off.
+
+## The mind map in practice
+
+> **[1] Project Overview** — Claude Playbook packages an agent steering methodology as a distributable plugin **[2]**. The core insight: the solution to agent autonomy is text, not code **[18]**. Refined across 60+ tasks...
+>
+> **[5] Task System** — Each task is a living document that IS the execution trace **[19]**. Design Phase → Work Plan → Pre-review. Task types: feature → Build, explore → Investigate, review → Evaluate...
+>
+> **[19] Document-Driven Execution** — task.md is a computational model: checkboxes = state, sections = memory, templates = instruction set, agent = interpreter **[5]**...
+
+The agent follows links — **[5]** from the overview reaches the task system, **[19]** from there reaches the execution model. Architecture, decisions, context — the things that vanish between sessions persist across them.
 
 ## When not to use it
 
-Quick questions, one-line fixes, shell commands, doc tweaks — anything that doesn't need multiple steps. The plugin is for work where structure pays for itself: features, refactors, investigations, multi-file changes.
+Quick questions, one-line fixes, shell commands, doc tweaks. The structure is for work that benefits from it — features, refactors, investigations, multi-file changes. Anything where you'd want to say "build this" rather than watch every keystroke.
 
-Refined across 60+ tasks on a real codebase. Works best when you want to say "build this" and check back later, rather than watching every step.
+Refined across 60+ tasks on a real codebase.
