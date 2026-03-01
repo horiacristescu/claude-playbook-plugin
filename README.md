@@ -9,7 +9,7 @@ You:    "Add rate limiting to the API endpoints"
 Agent:  creates task, writes a 12-gate plan
 Judge:  reviews the plan blind (no conversation access — no anchoring)
 Agent:  works gate by gate, checking boxes, annotating findings
-You:    (45 minutes later) read the task.md, see exactly what happened and why
+You:    (20 minutes later) read the task.md, see exactly what happened and why
 ```
 
 ## Everything is a task
