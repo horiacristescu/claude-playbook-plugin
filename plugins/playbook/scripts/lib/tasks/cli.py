@@ -349,10 +349,12 @@ def main():
         pending_only = "--pending" in cmd_args
         list_tasks(project_path, pending_only=pending_only)
 
-    elif cmd == "judge":
+    elif cmd in ("plan-review", "impl-review", "judge"):
+        # "judge" is a legacy alias — auto-detects mode from task status
+        review_cmd = cmd
         if not cmd_args:
-            print("Error: 'judge' requires a task number", file=sys.stderr)
-            print("Usage: tasks judge <number> [--backend claude|codex]", file=sys.stderr)
+            print(f"Error: '{review_cmd}' requires a task number", file=sys.stderr)
+            print(f"Usage: tasks {review_cmd} <number> [--backend claude|codex]", file=sys.stderr)
             sys.exit(1)
 
         import shutil
@@ -376,7 +378,7 @@ def main():
             sys.exit(1)
 
         if not remaining_args:
-            print("Error: 'judge' requires a task number", file=sys.stderr)
+            print(f"Error: '{review_cmd}' requires a task number", file=sys.stderr)
             sys.exit(1)
 
         task_num = remaining_args[0]
@@ -392,7 +394,7 @@ def main():
         task_file = matches[0]
         task_path = str(task_file.relative_to(project_path))
 
-        from tasks.template import judge_prompt
+        from tasks.template import plan_review_prompt, impl_review_prompt
 
         # Build context: mind map + task content (bounded to avoid argv/context limits)
         MAX_CONTEXT_CHARS = 100_000
@@ -408,8 +410,17 @@ def main():
         if len(system_context) > MAX_CONTEXT_CHARS:
             system_context = system_context[:MAX_CONTEXT_CHARS] + "\n\n[... truncated for context budget ...]"
 
-        from tasks.core import _extract_status
-        judge_mode = "impl" if _extract_status(task_file).startswith("done") else "plan"
+        # Determine mode: explicit from command, or auto-detect for legacy "judge"
+        if review_cmd == "plan-review":
+            review_mode = "plan"
+        elif review_cmd == "impl-review":
+            review_mode = "impl"
+        else:  # legacy "judge" — auto-detect from status
+            from tasks.core import _extract_status
+            review_mode = "impl" if _extract_status(task_file).startswith("done") else "plan"
+
+        prompt_fn = plan_review_prompt if review_mode == "plan" else impl_review_prompt
+        review_label = "plan review" if review_mode == "plan" else "impl review"
 
         if backend == "claude":
             claude_bin = shutil.which("claude")
@@ -417,7 +428,7 @@ def main():
                 print("Error: 'claude' not found on PATH", file=sys.stderr)
                 sys.exit(1)
 
-            prompt = judge_prompt(task_path, mode=judge_mode)
+            prompt = prompt_fn(task_path)
             env = os.environ.copy()
             env["CLAUDECODE"] = ""
             env.pop("CLAUDE_CODE_SSE_PORT", None)
@@ -467,7 +478,7 @@ def main():
             else:
                 cmd_list = claude_args
 
-            print(f"Running blind judge (claude) on {task_path}...", flush=True)
+            print(f"Running {review_label} (claude) on {task_path}...", flush=True)
             result = subprocess.run(
                 cmd_list,
                 cwd=str(project_path),
@@ -483,7 +494,7 @@ def main():
                 print("Install: https://github.com/openai/codex", file=sys.stderr)
                 sys.exit(1)
 
-            prompt = judge_prompt(task_path, inline_context=True, mode=judge_mode)
+            prompt = prompt_fn(task_path, inline_context=True)
             # Codex has no system prompt — inline context into the user prompt
             full_prompt = f"{system_context}\n\n---\n\n{prompt}"
 
@@ -497,7 +508,7 @@ def main():
                 "-",  # read prompt from stdin
             ]
 
-            print(f"Running blind judge (codex) on {task_path}...", flush=True)
+            print(f"Running {review_label} (codex) on {task_path}...", flush=True)
             result = subprocess.run(
                 cmd_list,
                 cwd=str(project_path),
@@ -511,15 +522,15 @@ def main():
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr, flush=True)
 
-        # Save judge output — backend-specific log files
+        # Save output — backend-specific log files
         log_name = "judge.log" if backend == "claude" else "judge-codex.log"
         judge_log = task_file.parent / log_name
         output = (result.stdout or "").strip()
         if result.returncode != 0 and not output:
             if judge_log.exists():
-                print(f"\nJudge failed (exit {result.returncode}); kept previous {judge_log.relative_to(project_path)}", flush=True)
+                print(f"\nReview failed (exit {result.returncode}); kept previous {judge_log.relative_to(project_path)}", flush=True)
             else:
-                print(f"\nJudge failed (exit {result.returncode}); no output to save", flush=True)
+                print(f"\nReview failed (exit {result.returncode}); no output to save", flush=True)
         else:
             if backend == "claude":
                 judge_log.write_text(result.stdout or "")

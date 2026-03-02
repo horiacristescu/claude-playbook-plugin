@@ -51,10 +51,10 @@ pending
 - [ ] Checkpoint: Would a fresh agent understand this task and execute it well?
 - [ ] The work plan below has the right granularity (not too coarse, not micro-steps)
 
-## Judge
-- [ ] Run `tasks judge <N>` — wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates.
+## Plan Review
+- [ ] Run `tasks plan-review <N>` — wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates. **Justify lens:** does every work gate trace up to something in Intent/Design? Are there gates that justify nothing above them (scope creep)? Intent claims with no gate to satisfy them (gaps)?
 
-(judge findings appear here)
+(plan review findings appear here)
 
 ---
 
@@ -64,6 +64,13 @@ pending
 > Standard feature: 6-8 work gates + tests. If >15 gates, validate the approach first.
 
 (write work gates here)
+
+---
+
+## Implementation Review
+- [ ] Run `tasks impl-review <N>` — wait for it to finish (it edits this file). Re-read findings. **Satisfy lens:** does every Intent claim trace down through code to tests? Where does the chain break?
+
+(implementation review findings appear here)
 
 ---
 

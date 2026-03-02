@@ -118,10 +118,10 @@ def design_phase() -> str:
 
 def judge_section() -> str:
     return """\
-## Judge
-- [ ] Run `.claude/bin/tasks judge <N>` \u2014 wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates.
+## Plan Review
+- [ ] Run `.claude/bin/tasks plan-review <N>` — wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates. **Justify lens:** does every work gate trace up to something in Intent/Design? Are there gates that justify nothing above them (scope creep)? Intent claims with no gate to satisfy them (gaps)?
 
-(judge findings appear here)
+(plan review findings appear here)
 
 ---"""
 
@@ -134,6 +134,16 @@ def work_plan() -> str:
 > Standard feature: 6-8 work gates + tests. If >15 gates, validate the approach first.
 
 (write work gates here)
+
+---"""
+
+
+def judge_impl_section() -> str:
+    return """\
+## Implementation Review
+- [ ] Run `.claude/bin/tasks impl-review <N>` — wait for it to finish (it edits this file). Re-read findings. **Satisfy lens:** does every Intent claim trace down through code to tests? Where does the chain break?
+
+(implementation review findings appear here)
 
 ---"""
 
@@ -154,46 +164,23 @@ def parked() -> str:
 ---"""
 
 
-def judge_prompt(task_path: str, inline_context: bool = False,
-                 mode: str = "plan") -> str:
-    """Return the blind judge prompt for plan or implementation review.
-
-    Args:
-        task_path: Relative path to the task.md file (e.g. .agent/tasks/001-foo/task.md)
-        inline_context: If True, say context is "provided below" (for backends
-            without system prompt support, e.g. Codex). Default False = "in your system prompt".
-        mode: "plan" for pre-implementation review, "impl" for post-implementation review.
-    """
-    context_location = "provided below" if inline_context else "provided in your system prompt"
-
-    # Extract task number from path (e.g. .agent/tasks/042-foo/task.md -> 042)
+def _intent_check(task_path: str) -> str:
+    """Extract task number and return intent-check instruction for judge prompts."""
     import re as _re
-    _tn = _re.search(r'/(\d{3})-', task_path)
+    _tn = _re.search(r'[/\\](\d{3})-', task_path)
     task_number = _tn.group(1) if _tn else None
-    intent_check = ""
     if task_number:
-        intent_check = (
+        return (
             f"If .agent/chat_log.md exists, run `tasks context {task_number}` to see the user's original messages. "
             "Check whether the task addresses what the user actually asked for, not just the agent's interpretation. "
         )
+    return ""
 
-    if mode == "impl":
-        return (
-            "You are a senior engineer reviewing a COMPLETED implementation. "
-            f"The MIND_MAP.md and task.md are {context_location}. "
-            "Read the source files changed by this task (look at the Work Plan gates for paths). "
-            f"{intent_check}"
-            "Review through four lenses: "
-            "(1) Simplify — what's unnecessary or over-engineered? What can be removed? "
-            "(2) Self-critique — does the code actually fulfill the stated Intent? What would a skeptic say? "
-            "(3) Bug scan — find actual bugs, edge cases, race conditions, or security issues. "
-            "(4) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
-            "Be specific and adversarial — your job is to find problems, not approve. "
-            "Max 5 findings, Critical and Important only — drop Minor. "
-            "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
-            f"Then edit {task_path}: "
-            "(1) replace the entire contents of the ## Judge section (everything between '## Judge' and the next '##' heading) with your findings — this is idempotent on reruns."
-        )
+
+def plan_review_prompt(task_path: str, inline_context: bool = False) -> str:
+    """Return the blind judge prompt for plan review (before implementation)."""
+    context_location = "provided below" if inline_context else "provided in your system prompt"
+    intent_check = _intent_check(task_path)
 
     return (
         "You are a senior engineer reviewing a PLAN — no code has been written yet. "
@@ -209,9 +196,41 @@ def judge_prompt(task_path: str, inline_context: bool = False,
         "Max 5 findings, Critical and Important only — drop Minor. "
         "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
         f"Then edit {task_path}: "
-        "(1) replace the entire contents of the ## Judge section (everything between '## Judge' and the next '##' heading) with your findings — this is idempotent on reruns, "
+        "(1) in the '## Plan Review' section, replace the '(plan review findings appear here)' placeholder with your findings — this is idempotent on reruns (if the placeholder was already replaced, replace the existing findings), "
         "(2) revise the ## Work Plan gates to address Critical and Important findings."
     )
+
+
+def impl_review_prompt(task_path: str, inline_context: bool = False) -> str:
+    """Return the blind judge prompt for implementation review (after code is written)."""
+    context_location = "provided below" if inline_context else "provided in your system prompt"
+    intent_check = _intent_check(task_path)
+
+    return (
+        "You are a senior engineer reviewing a COMPLETED implementation. "
+        f"The MIND_MAP.md and task.md are {context_location}. "
+        "Read the source files changed by this task (look at the Work Plan gates for paths). "
+        f"{intent_check}"
+        "Review through four lenses: "
+        "(1) Simplify — what's unnecessary or over-engineered? What can be removed? "
+        "(2) Self-critique — does the code actually fulfill the stated Intent? What would a skeptic say? "
+        "(3) Bug scan — find actual bugs, edge cases, race conditions, or security issues. "
+        "(4) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
+        "Be specific and adversarial — your job is to find problems, not approve. "
+        "Max 5 findings, Critical and Important only — drop Minor. "
+        "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
+        f"Then edit {task_path}: "
+        "(1) in the '## Implementation Review' section, replace the '(implementation review findings appear here)' placeholder with your findings — this is idempotent on reruns (if the placeholder was already replaced, replace the existing findings)."
+    )
+
+
+# Legacy alias for backward compatibility
+def judge_prompt(task_path: str, inline_context: bool = False,
+                 mode: str = "plan") -> str:
+    """Deprecated: use plan_review_prompt() or impl_review_prompt() instead."""
+    if mode == "impl":
+        return impl_review_prompt(task_path, inline_context)
+    return plan_review_prompt(task_path, inline_context)
 
 
 def standing_orders() -> str:
@@ -245,7 +264,8 @@ Then **ask the user** what they want to work on. Don't autonomously pick a task.
 tasks work <number>              # activate task, hook starts tracking
 tasks work done                  # deactivate when finished
 tasks new <type> <name>          # create task — does NOT activate
-tasks judge <number>             # blind plan review by independent agent
+tasks plan-review <number>       # blind plan review by independent agent
+tasks impl-review <number>       # blind implementation review by independent agent
 tasks list [--pending]           # task overview
 tasks status                     # current gate position
 tasks bootstrap                  # orientation: mind map + skills + pending
@@ -295,7 +315,8 @@ Tasks CLI:
   tasks work <N>           activate task (start here)
   tasks work done          mark done + deactivate
   tasks new <type> <name>  create task (doesn't activate)
-  tasks judge <N>          blind plan review
+  tasks plan-review <N>    blind plan review
+  tasks impl-review <N>   blind implementation review
   tasks list [--pending]   show tasks
   tasks status             current gate position"""
 
@@ -317,14 +338,15 @@ Commands:
   new <type> <name>   Create task with playbook template
   list [--pending]    List all tasks with status
   status              Show head position for active tasks
-  judge <number>      Run blind plan-review judge on a task
+  plan-review <number>   Run blind plan review on a task
+  impl-review <number>   Run blind implementation review on a task
 
 Task types: {types}
 
 Examples:
   tasks work 058
   tasks new feature add-auth
-  tasks judge 001
+  tasks plan-review 001
   tasks list --pending"""
 
 
@@ -354,6 +376,7 @@ def render_template(num: int, title: str, task_type: str | None = None) -> str:
         design_phase(),
         judge_section(),
         work_plan(),
+        judge_impl_section(),
         pre_review(),
         parked(),
         standing_orders(),
