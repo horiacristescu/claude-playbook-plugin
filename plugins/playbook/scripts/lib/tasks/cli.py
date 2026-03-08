@@ -1399,13 +1399,31 @@ def main():
               len(stale_hooks) == 0,
               f"stale paths: {', '.join(stale_hooks[:3])}" if stale_hooks else "clean")
 
-        # 5. Python version
+        # 5. Plugin version
+        from tasks.core import VERSION as code_version
+        installed_version = None
+        plugin_json_paths = list(Path.home().glob(".claude/plugins/**/playbook/.claude-plugin/plugin.json"))
+        if plugin_json_paths:
+            import json as _json2
+            try:
+                pdata = _json2.loads(plugin_json_paths[0].read_text(encoding="utf-8"))
+                installed_version = pdata.get("version", "unknown")
+            except (ValueError, OSError):
+                installed_version = "unreadable"
+        if installed_version:
+            version_ok = installed_version == code_version
+            check("plugin: version matches code", version_ok,
+                  f"installed={installed_version}, code={code_version}" + ("" if version_ok else " — run /upgrade"))
+        else:
+            check("plugin: installed", False, "no plugin found")
+
+        # 6. Python version
         import platform
         py_ver = platform.python_version()
         major, minor = sys.version_info[:2]
         check("python: version >= 3.8", major >= 3 and minor >= 8, py_ver)
 
-        # 6. write_text encoding (check installed plugin scripts)
+        # 7. write_text encoding (check installed plugin scripts)
         import re as _re
         import inspect
         cli_src = Path(inspect.getfile(sys.modules[__name__]))
@@ -1432,7 +1450,7 @@ def main():
         check("encoding: write_text/read_text have encoding=", unencoded == 0,
               f"{unencoded} unencoded calls" if unencoded else "all encoded")
 
-        # 7. Gate echo truncation
+        # 8. Gate echo truncation
         has_truncation = False
         for hd in hooks_dirs:
             echo_hook = hd / "state-echo-hook"
