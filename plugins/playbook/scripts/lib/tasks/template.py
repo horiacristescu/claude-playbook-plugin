@@ -279,6 +279,100 @@ def judge_prompt(task_path: str, inline_context: bool = False,
     return plan_review_prompt(task_path, inline_context)
 
 
+def design_phase_light() -> str:
+    """Lightweight design phase for Fix tasks — just restate and define done."""
+    return "## Design Phase\n\n" + chat_log_research() + "\n\n" + """\
+### Fix Orientation
+- [ ] What exactly is broken or needs cleaning up?
+- [ ] What does "fixed" look like? (specific grep, test, or behavior)
+- [ ] What adjacent code could this break?"""
+
+
+def work_plan_fix() -> str:
+    """Fix-specific work plan — locate, fix, verify pairs."""
+    return """\
+## Work Plan
+
+> Fix/Verify pairs. What could this break?
+
+- [ ] Fix: (what to change)
+- [ ] Verify: (grep/test that confirms the fix)
+- [ ] Side effects: anything else that changed? Adjacent code still works?
+
+---"""
+
+
+def design_phase_investigate() -> str:
+    """Investigate-oriented design phase — hypothesis-first."""
+    return "## Design Phase\n\n" + chat_log_research() + "\n\n" + """\
+### Investigation Orientation
+- [ ] What's the question or hypothesis? State it before looking.
+- [ ] What evidence would change your mind?
+- [ ] When do you stop? (convergence criteria: N rounds with no new position, or specific answer found)"""
+
+
+def work_plan_investigate() -> str:
+    """Investigate-specific work plan — round structure."""
+    return """\
+## Work Plan
+
+> Rounds: hypothesis → test → result → checkpoint. Stop when converging.
+
+### Round 1: [focus]
+- **Hypothesis:** (before testing)
+- **Test:** (what to check)
+- **Result:** (what happened)
+- [ ] Checkpoint: converging or scattering? New hypothesis needed?
+
+### Round 2: [focus]
+- **Hypothesis:** (refined from Round 1)
+- **Test:** (what to check)
+- **Result:** (what happened)
+- [ ] Checkpoint: converging or scattering?
+
+### Synthesis
+- [ ] What did you learn? Key findings with evidence.
+- [ ] What remains unknown? What would a follow-up task investigate?
+
+---"""
+
+
+def design_phase_evaluate() -> str:
+    """Evaluate-oriented design phase — define lenses and scope."""
+    return "## Design Phase\n\n" + chat_log_research() + "\n\n" + """\
+### Evaluation Orientation
+- [ ] What are you evaluating, and against what criteria?
+- [ ] Define lenses (2-4 dimensions to assess consistently across all items)
+- [ ] How many items? If >5, plan a midpoint checkpoint.
+- [ ] Are you assessing or fixing? Keep them separate — assess first."""
+
+
+def work_plan_evaluate() -> str:
+    """Evaluate-specific work plan — lenses, per-item, verdict."""
+    return """\
+## Work Plan
+
+> Apply lenses consistently. Assess first, decide action after.
+
+### Lenses
+| Lens | What it measures |
+|------|-----------------|
+| (lens 1) | (description) |
+| (lens 2) | (description) |
+
+### Assessment
+- [ ] Item 1: (apply all lenses)
+- [ ] Item 2: (apply all lenses)
+- [ ] Midpoint checkpoint: patterns emerging? Abort early or continue?
+
+### Verdict
+- [ ] Overall assessment: PASS / PARTIAL / FAIL
+- [ ] Gaps found: cosmetic or material?
+- [ ] Sufficiency: is the current state good enough, or do gaps justify action?
+
+---"""
+
+
 def standing_orders() -> str:
     return """\
 ## Standing Orders
@@ -415,18 +509,42 @@ def render_template(num: int, title: str, task_type: str | None = None) -> str:
     pattern_name = PLAYBOOKS.get(task_type) if task_type else None
     playbook_ref = f"playbook/{pattern_name}" if pattern_name else "(none)"
 
-    parts = [
+    # Common parts shared by all variants
+    common_start = [
         header(num, title),
         sticker(),
         status(),
         intent_why_refs(playbook_ref),
-        design_phase(),
-        judge_section(),
-        work_plan(),
-        judge_impl_section(),
+    ]
+    common_end = [
         pre_review(),
         parked(),
         standing_orders(),
     ]
 
+    if pattern_name == "Fix":
+        middle = [
+            design_phase_light(),
+            work_plan_fix(),
+        ]
+    elif pattern_name == "Investigate":
+        middle = [
+            design_phase_investigate(),
+            work_plan_investigate(),
+        ]
+    elif pattern_name == "Evaluate":
+        middle = [
+            design_phase_evaluate(),
+            work_plan_evaluate(),
+        ]
+    else:
+        # Build (default) — full ceremony
+        middle = [
+            design_phase(),
+            judge_section(),
+            work_plan(),
+            judge_impl_section(),
+        ]
+
+    parts = common_start + middle + common_end
     return "\n\n".join(parts) + "\n"
