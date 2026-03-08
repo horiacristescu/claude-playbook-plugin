@@ -170,11 +170,32 @@ def main():
                 print(f"Task {task_num} not found", file=sys.stderr)
                 sys.exit(1)
 
-        # Write task number to current_state
-        # Always write plain current_state (hooks fallback), plus per-session if set
+        # Auto-close previous task if all gates are checked
         agent_dir = project_path / ".agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
         legacy_state = agent_dir / "current_state"
+        prev_task = None
+        if legacy_state.exists():
+            prev_task = legacy_state.read_text(encoding="utf-8").strip()
+        if prev_task and prev_task != task_num:
+            from tasks.core import _extract_head_position, _extract_status
+            prev_matches = list((project_path / ".agent" / "tasks").glob(f"{prev_task}-*/task.md"))
+            if prev_matches:
+                prev_file = prev_matches[0]
+                prev_status = _extract_status(prev_file)
+                prev_head = _extract_head_position(prev_file)
+                if prev_head == "(all gates checked)" and not prev_status.startswith("done"):
+                    # Auto-close: set status to done
+                    prev_lines = prev_file.read_text(encoding="utf-8").splitlines(keepends=True)
+                    for i, line in enumerate(prev_lines):
+                        if line.strip() == "## Status" and i + 1 < len(prev_lines):
+                            prev_lines[i + 1] = "done\n"
+                            prev_file.write_text("".join(prev_lines), encoding="utf-8")
+                            break
+                    print(f"Auto-closed task {prev_task} (all gates checked).")
+
+        # Write task number to current_state
+        # Always write plain current_state (hooks fallback), plus per-session if set
         legacy_state.write_text(f"{task_num}\n", encoding="utf-8")
         session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
         if session_id:
