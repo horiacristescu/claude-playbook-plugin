@@ -34,6 +34,13 @@ PROJECT_DIR=$(find_project_root)
 if [ -n "$PROJECT_DIR" ]; then
     create_wrapper "$PROJECT_DIR" tasks
     create_wrapper "$PROJECT_DIR" sandbox
+
+    # GC: sweep stale per-session files from crashed/killed sessions (>24h old)
+    AGENT_DIR="$PROJECT_DIR/.agent"
+    if [ -d "$AGENT_DIR" ]; then
+        find "$AGENT_DIR" -maxdepth 1 -name '.hook_counters.*' -mtime +0 -delete 2>/dev/null || true
+        find "$AGENT_DIR" -maxdepth 1 -name 'current_state.*' -mtime +0 -delete 2>/dev/null || true
+    fi
 fi
 
 exit 0

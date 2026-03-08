@@ -117,7 +117,7 @@ format_context() {
     local rel_path="$6"
 
     if [ -z "$gate_line" ]; then
-        echo "# [${task_num}] — all gates done. If doing new work, update: .claude/bin/tasks work <N>"
+        echo "# [${task_num}] — all gates done. Stay for follow-up. Auto-closes on task switch."
     else
         echo "# Working on task [${task_num}] gate (${done}/${total}) -> [ ] ${gate_text}
 # Done? Check the box: ${rel_path}:${gate_line}"
