@@ -76,7 +76,7 @@ def _load_playbook(task_type: str, project_path: Path | None = None) -> str | No
     if not skill_path:
         return None
 
-    content = skill_path.read_text()
+    content = skill_path.read_text(encoding="utf-8")
 
     # Extract the ```markdown ... ``` block under ### <pattern_name>
     in_section = False
@@ -102,13 +102,32 @@ def _load_playbook(task_type: str, project_path: Path | None = None) -> str | No
     return "\n".join(template_lines) if template_lines else None
 
 
+def _find_custom_playbook(project_path: Path, task_type: str) -> Path | None:
+    """Check if a custom playbook template exists in .agent/playbooks/."""
+    playbook = project_path / ".agent" / "playbooks" / f"{task_type}.md"
+    return playbook if playbook.exists() else None
+
+
+def list_all_types(project_path: Path) -> list[str]:
+    """Return sorted list of all available task types (built-in + custom)."""
+    types = set(PLAYBOOKS.keys())
+    playbooks_dir = project_path / ".agent" / "playbooks"
+    if playbooks_dir.exists():
+        for f in playbooks_dir.glob("*.md"):
+            if f.name != "README.md":
+                types.add(f.stem)
+    return sorted(types)
+
+
 def create_task(project_path: Path, name: str, task_type: str | None = None) -> Path:
     """Create a new task with the given name.
 
     Args:
         project_path: Path to the project root
         name: Human-readable name for the task
-        task_type: Task type (feature, bugfix, etc.) for playbook template
+        task_type: Task type (feature, bugfix, etc.) for playbook template.
+            If a matching .agent/playbooks/<type>.md exists, uses that
+            instead of the base Python template.
 
     Returns:
         Path to the created task.md file
@@ -123,18 +142,26 @@ def create_task(project_path: Path, name: str, task_type: str | None = None) -> 
     task_dir = tasks_dir / folder_name
     task_dir.mkdir()
 
-    # Build task content
-    from tasks.template import render_template
-    content = render_template(num=task_num, title=name.title(), task_type=task_type)
+    # Check for custom playbook template first
+    custom = _find_custom_playbook(project_path, task_type) if task_type else None
 
-    # Append playbook template if task_type specified
-    if task_type:
-        role_template = _load_playbook(task_type, project_path)
-        if role_template:
-            content += "\n" + role_template + "\n"
+    if custom:
+        content = custom.read_text(encoding="utf-8")
+        content = content.replace("{{NNN}}", f"{task_num:03d}")
+        content = content.replace("{{TITLE}}", name.title())
+    else:
+        # Fall back to base Python template
+        from tasks.template import render_template
+        content = render_template(num=task_num, title=name.title(), task_type=task_type)
+
+        # Append playbook template if task_type specified
+        if task_type:
+            role_template = _load_playbook(task_type, project_path)
+            if role_template:
+                content += "\n" + role_template + "\n"
 
     task_file = task_dir / "task.md"
-    task_file.write_text(content)
+    task_file.write_text(content, encoding="utf-8")
 
     return task_file
 
@@ -142,7 +169,7 @@ def create_task(project_path: Path, name: str, task_type: str | None = None) -> 
 def _extract_status(task_file: Path) -> str:
     """Extract status from task file (line after last ## Status)."""
     try:
-        lines = task_file.read_text().splitlines()
+        lines = task_file.read_text(encoding="utf-8").splitlines()
         status_idx = None
         for i, line in enumerate(lines):
             if line.strip() == "## Status":
@@ -157,7 +184,7 @@ def _extract_status(task_file: Path) -> str:
 def _extract_problem(task_file: Path) -> str:
     """Extract first line of Problem/Intent section from task file."""
     try:
-        lines = task_file.read_text().splitlines()
+        lines = task_file.read_text(encoding="utf-8").splitlines()
         in_section = False
         for line in lines:
             if line.strip() in ("## Problem", "## Intent"):
@@ -180,7 +207,7 @@ def _extract_problem(task_file: Path) -> str:
 def _extract_head_position(task_file: Path) -> str:
     """Find the first unchecked checkbox or empty required field."""
     try:
-        lines = task_file.read_text().splitlines()
+        lines = task_file.read_text(encoding="utf-8").splitlines()
         for line in lines:
             stripped = line.strip()
             # Unchecked checkbox
@@ -229,7 +256,7 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
         return {"error": "No active task with open gates"}
 
     task_name = task_file.parent.name
-    lines = task_file.read_text().splitlines()
+    lines = task_file.read_text(encoding="utf-8").splitlines()
 
     # Find and check off the first unchecked gate
     checked_text = None
@@ -247,7 +274,7 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
         return {"error": f"No unchecked gate in {task_name}"}
 
     # Write back
-    task_file.write_text("\n".join(lines) + "\n")
+    task_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     # Collect next gates (up to 3) after the one we just checked
     upcoming = []
@@ -273,7 +300,7 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
 def _extract_progress(task_file: Path) -> str:
     """Count checked/total checkboxes in a task file."""
     try:
-        content = task_file.read_text()
+        content = task_file.read_text(encoding="utf-8")
         checked = content.count("- [x]") + content.count("- [X]")
         total = checked + content.count("- [ ]")
         return f"{checked}/{total}" if total > 0 else "-"

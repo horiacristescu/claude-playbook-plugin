@@ -29,6 +29,22 @@ else
     SKIPPED+=(".agent/tasks/ (exists)")
 fi
 
+# --- (a2) .agent/playbooks/ + README ---
+PLAYBOOKS_DIR="$PROJECT_DIR/.agent/playbooks"
+if [ ! -d "$PLAYBOOKS_DIR" ]; then
+    mkdir -p "$PLAYBOOKS_DIR"
+    # Copy README from plugin scripts if available
+    PLUGIN_README=$(find ~/.claude/plugins -path '*/playbook/scripts/playbooks-README.md' 2>/dev/null | head -1)
+    if [ -n "$PLUGIN_README" ]; then
+        cp "$PLUGIN_README" "$PLAYBOOKS_DIR/README.md"
+    elif [ -f "$SCRIPT_DIR/playbooks-README.md" ]; then
+        cp "$SCRIPT_DIR/playbooks-README.md" "$PLAYBOOKS_DIR/README.md"
+    fi
+    CREATED+=(".agent/playbooks/")
+else
+    SKIPPED+=(".agent/playbooks/ (exists)")
+fi
+
 # --- (b) settings.json permissions.deny merge ---
 SETTINGS_FILE="$PROJECT_DIR/.claude/settings.json"
 mkdir -p "$PROJECT_DIR/.claude"

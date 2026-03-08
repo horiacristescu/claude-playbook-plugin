@@ -74,6 +74,11 @@ fi
 # Find first unchecked gate for the message
 FIRST_GATE=$(grep -m1 -E '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null | sed 's/^[[:space:]]*- \[ \] *//')
 
+# Freehand mode: don't block when current gate is Freehand
+if [ "$FIRST_GATE" = "Freehand" ]; then
+    exit 0
+fi
+
 cat >&2 <<MSG
 BLOCKED: ${UNCHECKED} unchecked gate(s) in task ${TASK}.
 

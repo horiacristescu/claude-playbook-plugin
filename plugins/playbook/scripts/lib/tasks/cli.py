@@ -33,7 +33,7 @@ def _load_mind_map(project_path: Path, max_chars: int = 25000) -> str | None:
     mind_map = project_path / "MIND_MAP.md"
     if not mind_map.exists():
         return None
-    content = mind_map.read_text()
+    content = mind_map.read_text(encoding="utf-8")
     if len(content) <= max_chars:
         return content
     # Keep 60% head, 40% tail — overview nodes are denser at the top
@@ -112,7 +112,7 @@ def main():
             prev_task = None
             for sf in [session_state, legacy_state]:
                 if sf and sf.exists():
-                    prev_task = sf.read_text().strip()
+                    prev_task = sf.read_text(encoding="utf-8").strip()
                     break
 
             if prev_task:
@@ -121,18 +121,18 @@ def main():
                 matches = list(tasks_dir.glob(f"{prev_task}-*/task.md"))
                 if matches:
                     task_file = matches[0]
-                    lines = task_file.read_text().splitlines(keepends=True)
+                    lines = task_file.read_text(encoding="utf-8").splitlines(keepends=True)
                     for i, line in enumerate(lines):
                         if line.strip() == "## Status" and i + 1 < len(lines):
                             lines[i + 1] = "done\n"
-                            task_file.write_text("".join(lines))
+                            task_file.write_text("".join(lines), encoding="utf-8")
                             break
                 # Remove all state files that reference this task (legacy + all per-session).
                 # PLAYBOOK_SESSION_ID is not set when called from Bash tool (only in hook
                 # context), so we can't rely on session_state alone — scan everything.
                 for sf in [legacy_state] + list(agent_dir.glob("current_state.*")):
                     try:
-                        if sf.exists() and sf.read_text().strip() == prev_task:
+                        if sf.exists() and sf.read_text(encoding="utf-8").strip() == prev_task:
                             sf.unlink()
                     except OSError:
                         pass
@@ -154,11 +154,11 @@ def main():
                 done = _is_done(tf)
                 if done:
                     # Reopen: reset Status to in_progress so activation can proceed.
-                    lines = tf.read_text().splitlines(keepends=True)
+                    lines = tf.read_text(encoding="utf-8").splitlines(keepends=True)
                     for i, line in enumerate(lines):
                         if line.strip() == "## Status" and i + 1 < len(lines):
                             lines[i + 1] = "in_progress\n"
-                            tf.write_text("".join(lines))
+                            tf.write_text("".join(lines), encoding="utf-8")
                             break
                     print(f"Note: task {task_num} was marked done — reopening.")
                     task_file = tf
@@ -175,10 +175,10 @@ def main():
         agent_dir = project_path / ".agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
         legacy_state = agent_dir / "current_state"
-        legacy_state.write_text(f"{task_num}\n")
+        legacy_state.write_text(f"{task_num}\n", encoding="utf-8")
         session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
         if session_id:
-            (agent_dir / f"current_state.{session_id}").write_text(f"{task_num}\n")
+            (agent_dir / f"current_state.{session_id}").write_text(f"{task_num}\n", encoding="utf-8")
 
         # Clean up stale per-session state files older than 24h
         agent_dir = project_path / ".agent"
@@ -197,20 +197,26 @@ def main():
         print()
 
         # Print the full task file
-        print(task_file.read_text().rstrip())
+        print(task_file.read_text(encoding="utf-8").rstrip())
 
 
     elif cmd == "new":
         if len(cmd_args) < 2:
             print("Error: 'new' requires a type and a name", file=sys.stderr)
             print("Usage: tasks new <type> <name>", file=sys.stderr)
-            print(f"Types: {', '.join(sorted(PLAYBOOKS.keys()))}", file=sys.stderr)
+            from tasks.core import list_all_types
+            all_types = list_all_types(find_project_root())
+            print(f"Types: {', '.join(all_types)}", file=sys.stderr)
             sys.exit(1)
 
         task_type = cmd_args[0]
-        if task_type not in PLAYBOOKS:
+        from tasks.core import list_all_types, _find_custom_playbook
+        project_path_for_check = find_project_root()
+        is_custom = _find_custom_playbook(project_path_for_check, task_type) is not None
+        if task_type not in PLAYBOOKS and not is_custom:
+            all_types = list_all_types(project_path_for_check)
             print(f"Error: unknown type '{task_type}'", file=sys.stderr)
-            print(f"Types: {', '.join(sorted(PLAYBOOKS.keys()))}", file=sys.stderr)
+            print(f"Types: {', '.join(all_types)}", file=sys.stderr)
             sys.exit(1)
 
         task_name = " ".join(cmd_args[1:])
@@ -232,7 +238,7 @@ def main():
                 print(f"Usage: tasks new {task_type} {num_match.group(2)}", file=sys.stderr)
                 sys.exit(1)
         task_file = create_task(project_path, task_name, task_type=task_type)
-        pattern_name = PLAYBOOKS[task_type]
+        pattern_name = PLAYBOOKS.get(task_type, f"custom ({task_type})")
 
         import re
         task_num_match = re.match(r'^(\d+)-', task_file.parent.name)
@@ -252,7 +258,7 @@ def main():
                 print("Use this to improve your task.md: select patterns and gates as appropriate,")
                 print("or invent new ones. This is a starting point — expand as needed.")
                 print()
-                content = playbook_file.read_text()
+                content = playbook_file.read_text(encoding="utf-8")
                 # Strip sections not relevant to task design
                 for marker in ["## Mind Map", "> Evidence base:"]:
                     idx = content.find(marker)
@@ -286,7 +292,7 @@ def main():
 ## Architecture
 
 (describe your project architecture here)
-""")
+""", encoding="utf-8")
             print("  MIND_MAP.md    created")
         else:
             print("  MIND_MAP.md    exists")
@@ -295,7 +301,7 @@ def main():
         claude_md = target / "CLAUDE.md"
         if not claude_md.exists():
             from tasks.template import claude_md as claude_md_template
-            claude_md.write_text(claude_md_template(title))
+            claude_md.write_text(claude_md_template(title), encoding="utf-8")
             print("  CLAUDE.md      created")
         else:
             print("  CLAUDE.md      exists")
@@ -305,7 +311,7 @@ def main():
         if settings_file.exists():
             import json
             try:
-                settings = json.loads(settings_file.read_text())
+                settings = json.loads(settings_file.read_text(encoding="utf-8"))
                 if "hooks" in settings:
                     hook_events = list(settings["hooks"].keys())
                     print(f"  ⚠ .claude/settings.json has local hook registrations: {', '.join(hook_events)}")
@@ -349,6 +355,196 @@ def main():
         pending_only = "--pending" in cmd_args
         list_tasks(project_path, pending_only=pending_only)
 
+    elif cmd == "panel-review":
+        if not cmd_args:
+            print("Error: 'panel-review' requires a task number", file=sys.stderr)
+            print("Usage: tasks panel-review <number> [--mode plan|impl] [--web-search] [--timeout SECONDS]", file=sys.stderr)
+            sys.exit(1)
+
+        import shutil
+        import subprocess
+        from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeout
+
+        # Parse flags
+        review_mode = "plan"
+        web_search = False
+        timeout_secs = 300  # 5 min default
+        extra_prompt = ""
+        remaining_args = []
+        i = 0
+        while i < len(cmd_args):
+            if cmd_args[i] == "--mode" and i + 1 < len(cmd_args):
+                review_mode = cmd_args[i + 1]
+                i += 2
+            elif cmd_args[i] == "--web-search":
+                web_search = True
+                i += 1
+            elif cmd_args[i] == "--timeout" and i + 1 < len(cmd_args):
+                timeout_secs = int(cmd_args[i + 1])
+                i += 2
+            elif cmd_args[i] == "--prompt" and i + 1 < len(cmd_args):
+                extra_prompt = cmd_args[i + 1]
+                i += 2
+            else:
+                remaining_args.append(cmd_args[i])
+                i += 1
+
+        if review_mode not in ("plan", "impl"):
+            print(f"Error: unknown mode '{review_mode}'", file=sys.stderr)
+            sys.exit(1)
+
+        task_num = remaining_args[0] if remaining_args else ""
+        if not task_num:
+            print("Error: 'panel-review' requires a task number", file=sys.stderr)
+            sys.exit(1)
+        if task_num.isdigit():
+            task_num = task_num.zfill(3)
+
+        project_path = find_project_root()
+        tasks_dir = project_path / ".agent" / "tasks"
+        matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
+        if not matches:
+            print(f"Task {task_num} not found", file=sys.stderr)
+            sys.exit(1)
+
+        task_file = matches[0]
+        task_path = str(task_file.relative_to(project_path))
+
+        from tasks.template import panel_plan_review_prompt, panel_impl_review_prompt
+
+        # Build context
+        MAX_CONTEXT_CHARS = 100_000
+        context_parts = []
+        mm_content = _load_mind_map(project_path)
+        if mm_content:
+            context_parts.append(f"=== MIND_MAP.md ===\n{mm_content}")
+        task_content = task_file.read_text(encoding="utf-8")
+        if len(task_content) > MAX_CONTEXT_CHARS // 2:
+            task_content = task_content[:MAX_CONTEXT_CHARS // 2] + "\n\n[... truncated ...]"
+        context_parts.append(f"=== {task_path} ===\n{task_content}")
+        system_context = "\n\n".join(context_parts)
+        if len(system_context) > MAX_CONTEXT_CHARS:
+            system_context = system_context[:MAX_CONTEXT_CHARS] + "\n\n[... truncated ...]"
+
+        prompt_fn = panel_plan_review_prompt if review_mode == "plan" else panel_impl_review_prompt
+        review_label = "plan review" if review_mode == "plan" else "impl review"
+
+        # Discover available judges
+        judges = []
+        claude_bin = shutil.which("claude")
+        codex_bin = shutil.which("codex")
+        gemini_bin = shutil.which("gemini")
+
+        if claude_bin:
+            for variant in ["opus", "sonnet", "haiku"]:
+                judges.append(("claude", variant, claude_bin))
+        if codex_bin:
+            for variant in ["gpt-5.4", "gpt-5.1-codex-max"]:
+                judges.append(("codex", variant, codex_bin))
+        if gemini_bin:
+            for variant in ["3.1-pro", "2.5-pro"]:
+                judges.append(("gemini", variant, gemini_bin))
+
+        if not judges:
+            print("Error: no judge backends found (need claude, codex, or gemini on PATH)", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Running panel {review_label} on {task_path} ({len(judges)} judges, {timeout_secs}s timeout)...", flush=True)
+
+        def run_judge(judge_spec):
+            provider, variant, binary = judge_spec
+            label = f"{provider}:{variant}" if variant else provider
+            prompt = prompt_fn(task_path, inline_context=(provider != "claude"))
+            if extra_prompt:
+                prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
+
+            try:
+                if provider == "claude":
+                    tools = "Read,Glob,Grep"
+                    if web_search:
+                        tools += ",WebSearch"
+                    env = os.environ.copy()
+                    env["CLAUDECODE"] = ""
+                    env.pop("CLAUDE_CODE_SSE_PORT", None)
+                    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+                    env.pop("CLAUDE_PROJECT_DIR", None)
+                    cmd_list = [
+                        binary, "-p", prompt,
+                        "--model", variant,
+                        "--tools", tools,
+                        "--allowedTools", tools,
+                        "--append-system-prompt", system_context,
+                    ]
+                    result = subprocess.run(
+                        cmd_list, cwd=str(project_path), env=env,
+                        capture_output=True, text=True, timeout=timeout_secs,
+                    )
+                    return label, result.stdout or "(no output)"
+
+                elif provider == "codex":
+                    full_prompt = f"{system_context}\n\n---\n\n{prompt}"
+                    cmd_list = [binary]
+                    if web_search:
+                        cmd_list.append("--search")
+                    cmd_list += ["exec", "--ephemeral", "--skip-git-repo-check",
+                        "--sandbox", "read-only"]
+                    if variant:
+                        cmd_list += ["-m", variant]
+                    cmd_list.append("-")
+                    result = subprocess.run(
+                        cmd_list, cwd=str(project_path),
+                        input=full_prompt, capture_output=True, text=True,
+                        timeout=timeout_secs,
+                    )
+                    return label, result.stdout or "(no output)"
+
+                elif provider == "gemini":
+                    full_prompt = f"{system_context}\n\n---\n\n{prompt}"
+                    # Map simplified variant names to full model IDs
+                    model_id = f"gemini-{variant}"
+                    if variant == "3.1-pro":
+                        model_id = "gemini-3.1-pro-preview"
+                    
+                    cmd_list = [
+                        binary, "-p", full_prompt,
+                        "-m", model_id,
+                        "--approval-mode", "plan",
+                        "-o", "text",
+                    ]
+                    result = subprocess.run(
+                        cmd_list, cwd=str(project_path),
+                        capture_output=True, text=True, timeout=timeout_secs,
+                    )
+                    return label, result.stdout or "(no output)"
+
+            except subprocess.TimeoutExpired:
+                return label, f"(timed out after {timeout_secs}s)"
+            except Exception as e:
+                return label, f"(error: {e})"
+
+        # Run all judges in parallel
+        import concurrent.futures
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(judges)) as executor:
+            futures = {executor.submit(run_judge, j): j for j in judges}
+            for future in concurrent.futures.as_completed(futures):
+                label, output = future.result()
+                results[label] = output
+                print(f"  [{label}] done", flush=True)
+
+        # Write judge.md
+        judge_md = task_file.parent / "judge.md"
+        lines = [f"# Panel {review_label.title()} — {task_path}\n"]
+        lines.append(f"**Judges:** {len(results)} | **Web search:** {'yes' if web_search else 'no'} | **Timeout:** {timeout_secs}s\n\n")
+        for label in sorted(results.keys()):
+            lines.append("═" * 60)
+            lines.append(f"  JUDGE: {label}")
+            lines.append("═" * 60 + "\n")
+            lines.append(results[label].strip())
+            lines.append("\n\n")
+        judge_md.write_text("\n".join(lines), encoding="utf-8")
+        print(f"\nSaved: {judge_md.relative_to(project_path)} ({len(results)}/{len(judges)} judges)", flush=True)
+
     elif cmd in ("plan-review", "impl-review", "judge"):
         # "judge" is a legacy alias — auto-detects mode from task status
         review_cmd = cmd
@@ -360,13 +556,17 @@ def main():
         import shutil
         import subprocess
 
-        # Parse --backend flag (default: claude)
+        # Parse flags
         backend = "claude"
+        extra_prompt = ""
         remaining_args = []
         i = 0
         while i < len(cmd_args):
             if cmd_args[i] == "--backend" and i + 1 < len(cmd_args):
                 backend = cmd_args[i + 1]
+                i += 2
+            elif cmd_args[i] == "--prompt" and i + 1 < len(cmd_args):
+                extra_prompt = cmd_args[i + 1]
                 i += 2
             else:
                 remaining_args.append(cmd_args[i])
@@ -402,7 +602,7 @@ def main():
         mm_content = _load_mind_map(project_path)
         if mm_content:
             context_parts.append(f"=== MIND_MAP.md ===\n{mm_content}")
-        task_content = task_file.read_text()
+        task_content = task_file.read_text(encoding="utf-8")
         if len(task_content) > MAX_CONTEXT_CHARS // 2:
             task_content = task_content[:MAX_CONTEXT_CHARS // 2] + "\n\n[... truncated for context budget ...]"
         context_parts.append(f"=== {task_path} ===\n{task_content}")
@@ -429,6 +629,8 @@ def main():
                 sys.exit(1)
 
             prompt = prompt_fn(task_path)
+            if extra_prompt:
+                prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
             env = os.environ.copy()
             env["CLAUDECODE"] = ""
             env.pop("CLAUDE_CODE_SSE_PORT", None)
@@ -533,10 +735,10 @@ def main():
                 print(f"\nReview failed (exit {result.returncode}); no output to save", flush=True)
         else:
             if backend == "claude":
-                judge_log.write_text(result.stdout or "")
+                judge_log.write_text(result.stdout or "", encoding="utf-8")
             # codex: -o already writes the file; write stdout as fallback
-            elif not judge_log.exists() or not judge_log.read_text().strip():
-                judge_log.write_text(result.stdout or "")
+            elif not judge_log.exists() or not judge_log.read_text(encoding="utf-8").strip():
+                judge_log.write_text(result.stdout or "", encoding="utf-8")
             print(f"\nSaved: {judge_log.relative_to(project_path)}", flush=True)
 
         sys.exit(result.returncode)
@@ -564,7 +766,7 @@ def main():
         spans = []
         current_span = []
         inside = False
-        for line in chat_log.read_text().splitlines():
+        for line in chat_log.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if not inside and open_tag.match(stripped):
                 inside = True
@@ -639,7 +841,7 @@ def main():
             r'(?:.*/)?(tasks (?:work|new) .+)$'
         )
         seen = set()
-        for line in bash_history.read_text().splitlines():
+        for line in bash_history.read_text(encoding="utf-8").splitlines():
             m = pattern.match(line)
             if m:
                 cmd = m.group(2)
@@ -683,7 +885,7 @@ def main():
                     text = text[:max_line] + "..."
                 entries.append((msg_ts, 0, f"[{msg_id}] {text}"))
 
-        for line in chat_log.read_text().splitlines():
+        for line in chat_log.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             if not stripped:
                 continue
@@ -714,7 +916,7 @@ def main():
             r'(?:.*/)?(tasks (?:work|new) .+)$'
         )
         seen = set()
-        for line in bash_history.read_text().splitlines():
+        for line in bash_history.read_text(encoding="utf-8").splitlines():
             m = task_pattern.match(line)
             if m:
                 task_cmd = m.group(2)
@@ -759,7 +961,7 @@ def main():
         work_re = re.compile(r'tasks work (\d+)')
         transitions = []  # [(timestamp, task_num_or_None)]
         seen = set()
-        for line in bash_history.read_text().splitlines():
+        for line in bash_history.read_text(encoding="utf-8").splitlines():
             m = task_pattern.match(line)
             if m:
                 task_cmd = m.group(2)
@@ -793,7 +995,7 @@ def main():
         # Also detect existing tags to avoid double-tagging
         existing_tag = re.compile(r'^<!--\s*/?T\d+\s*-->$')
 
-        lines = chat_log.read_text().splitlines(keepends=True)
+        lines = chat_log.read_text(encoding="utf-8").splitlines(keepends=True)
         output = []
         current_tag = None  # currently open tag (task number)
         tags_inserted = 0
@@ -839,12 +1041,302 @@ def main():
                 if existing_tag.match(stripped):
                     print(f"  {stripped}")
         else:
-            chat_log.write_text("".join(output))
+            chat_log.write_text("".join(output), encoding="utf-8")
             print(f"Inserted {tags_inserted} tags into chat_log.md")
 
     elif cmd == "status":
         project_path = find_project_root()
         task_status(project_path)
+
+    elif cmd == "freehand":
+        project_path = find_project_root()
+        sub = cmd_args[0] if cmd_args else None
+
+        if sub == "log":
+            # Extract chat_log messages from freehand-start to now into task.md
+            agent_dir = project_path / ".agent"
+            state_file = _state_file(project_path)
+            if not state_file.exists():
+                print("Error: no active task", file=sys.stderr)
+                sys.exit(1)
+            task_num = state_file.read_text(encoding="utf-8").strip()
+            tasks_dir = agent_dir / "tasks"
+            matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
+            if not matches:
+                print(f"Error: task {task_num} not found", file=sys.stderr)
+                sys.exit(1)
+            task_file = matches[0]
+            task_text = task_file.read_text(encoding="utf-8")
+
+            # Find the freehand-start marker
+            import re
+            # Use findall + take last — supports multiple freehand blocks in one task
+            all_markers = re.findall(r'<!-- freehand-start: (.+?) -->', task_text)
+            marker_match = all_markers[-1] if all_markers else None
+            if not marker_match:
+                print("Error: no freehand-start marker found in task.md", file=sys.stderr)
+                sys.exit(1)
+
+            # Parse the start timestamp
+            from datetime import datetime, timezone
+            start_str = marker_match.strip()
+            try:
+                start_ts = datetime.fromisoformat(start_str)
+                if start_ts.tzinfo is None:
+                    start_ts = start_ts.replace(tzinfo=timezone.utc)
+            except ValueError:
+                print(f"Error: cannot parse freehand-start timestamp: {start_str}", file=sys.stderr)
+                sys.exit(1)
+
+            # Read chat_log.md and extract messages in the span
+            chat_log = agent_dir / "chat_log.md"
+            if not chat_log.exists():
+                print("Error: .agent/chat_log.md not found", file=sys.stderr)
+                sys.exit(1)
+
+            log_text = chat_log.read_text(encoding="utf-8")
+            # Parse message blocks: **[MNNN]** [YYYY-MM-DD HH:MM:SS UTC]
+            msg_pattern = re.compile(
+                r'^(\*\*\[M\d+\]\*\* \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\].*)',
+                re.MULTILINE
+            )
+            # Split log into message blocks by the --- separator
+            blocks = log_text.split("\n---\n")
+            extracted = []
+            for block in blocks:
+                m = msg_pattern.search(block)
+                if m:
+                    ts_str = m.group(2)
+                    try:
+                        msg_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        continue
+                    if msg_ts >= start_ts:
+                        extracted.append(block.strip())
+
+            if not extracted:
+                print("No chat_log messages found in freehand span.")
+                return
+
+            # Insert extracted messages into task.md below the Freehand log gate
+            log_gate_pattern = re.compile(r'^(- \[ \] Freehand log\b.*)', re.MULTILINE)
+            log_gate_match = log_gate_pattern.search(task_text)
+            if not log_gate_match:
+                print("Error: no '- [ ] Freehand log' gate found in task.md", file=sys.stderr)
+                sys.exit(1)
+
+            insert_pos = log_gate_match.end()
+            log_content = "\n\n" + "\n\n---\n\n".join(extracted) + "\n"
+            new_text = task_text[:insert_pos] + log_content + task_text[insert_pos:]
+            task_file.write_text(new_text, encoding="utf-8")
+            print(f"Inserted {len(extracted)} chat_log messages into task.md")
+            return
+
+        # Main freehand command: insert Freehand block into active task
+        state_file = _state_file(project_path)
+        agent_dir = project_path / ".agent"
+
+        if state_file.exists():
+            task_num = state_file.read_text(encoding="utf-8").strip()
+        else:
+            task_num = None
+
+        if not task_num:
+            # Orchestrator mode: create + activate a new task
+            print("No active task — creating freehand session...")
+            task_dir = create_task(project_path, "feature", "freehand-session")
+            task_file = task_dir / "task.md"
+            # Extract task number from dir name
+            task_num = task_dir.name.split("-")[0]
+            # Activate it
+            legacy_state = agent_dir / "current_state"
+            legacy_state.write_text(f"{task_num}\n", encoding="utf-8")
+            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
+            if session_id:
+                (agent_dir / f"current_state.{session_id}").write_text(f"{task_num}\n", encoding="utf-8")
+            print(f"Created and activated task {task_num}")
+        else:
+            # Work mode: insert into current task
+            tasks_dir = agent_dir / "tasks"
+            matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
+            if not matches:
+                print(f"Error: task {task_num} not found", file=sys.stderr)
+                sys.exit(1)
+            task_file = matches[0]
+
+        # Insert Freehand block before first unchecked gate in Work Plan
+        from datetime import datetime, timezone
+        task_text = task_file.read_text(encoding="utf-8")
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        freehand_block = (
+            f"\n### Freehand\n"
+            f"<!-- freehand-start: {now_iso} -->\n"
+            f"- [ ] Freehand\n"
+            f"- [ ] Freehand log — run `.claude/bin/tasks freehand log` to capture chat_log messages, "
+            f"then retro-add checked gates for work done\n"
+        )
+
+        # Find Work Plan section and insert before first unchecked gate there
+        import re
+        work_plan_match = re.search(r'^## Work Plan\b', task_text, re.MULTILINE)
+        if work_plan_match:
+            # Search for first unchecked gate after Work Plan header
+            after_wp = task_text[work_plan_match.start():]
+            gate_match = re.search(r'^- \[ \]', after_wp, re.MULTILINE)
+            if gate_match:
+                insert_pos = work_plan_match.start() + gate_match.start()
+            else:
+                # No unchecked gates — find the next --- separator and insert before it
+                sep_match = re.search(r'\n---\n', after_wp)
+                if sep_match:
+                    insert_pos = work_plan_match.start() + sep_match.start()
+                else:
+                    insert_pos = len(task_text)
+        else:
+            # No Work Plan section — append at end
+            insert_pos = len(task_text)
+
+        new_text = task_text[:insert_pos] + freehand_block + "\n" + task_text[insert_pos:]
+        task_file.write_text(new_text, encoding="utf-8")
+        print(f"Freehand block inserted in task {task_num}")
+        print(f"Freehand mode active. Agent: wait for user instructions. Close only when user says done.")
+
+    elif cmd == "doctor":
+        project_path = find_project_root()
+        passed = 0
+        failed = 0
+
+        def check(name: str, ok: bool, detail: str = ""):
+            nonlocal passed, failed
+            status = "PASS" if ok else "FAIL"
+            msg = f"  [{status}] {name}"
+            if detail:
+                msg += f" — {detail}"
+            print(msg)
+            if ok:
+                passed += 1
+            else:
+                failed += 1
+
+        print("tasks doctor\n")
+
+        # 1. Project structure
+        agent_tasks = project_path / ".agent" / "tasks"
+        check("project: .agent/tasks/ exists", agent_tasks.exists())
+        claude_md = project_path / "CLAUDE.md"
+        check("project: CLAUDE.md exists", claude_md.exists())
+        mind_map = project_path / "MIND_MAP.md"
+        check("project: MIND_MAP.md exists", mind_map.exists())
+
+        # 2. Unicode
+        stdout_enc = getattr(sys.stdout, "encoding", "unknown") or "unknown"
+        check("unicode: stdout encoding", "utf" in stdout_enc.lower(), stdout_enc)
+
+        # 3. Stale session files
+        agent_dir = project_path / ".agent"
+        stale = []
+        if agent_dir.exists():
+            active_state = agent_dir / "current_state"
+            active_task = active_state.read_text(encoding="utf-8").strip() if active_state.exists() else None
+            for sf in agent_dir.glob("current_state.*"):
+                try:
+                    task_in_file = sf.read_text(encoding="utf-8").strip()
+                    if active_task and task_in_file != active_task:
+                        stale.append(sf.name)
+                except OSError:
+                    pass
+        check("session: no stale current_state.* files", len(stale) == 0,
+              f"stale: {', '.join(stale)}" if stale else "clean")
+
+        # 4. Hooks — check .claude/hooks/ (installed) or src/hooks/ (dev repo)
+        hooks_dirs = [project_path / ".claude" / "hooks", project_path / "src" / "hooks"]
+        for hook_name in ["state-echo-hook", "task-gate-hook"]:
+            found = False
+            for hooks_dir in hooks_dirs:
+                hook_path = hooks_dir / hook_name
+                if hook_path.exists():
+                    executable = os.access(hook_path, os.X_OK)
+                    check(f"hooks: {hook_name}", executable,
+                          f"found at {hooks_dir.name}/" + ("" if executable else " but not executable"))
+                    found = True
+                    break
+            if not found:
+                check(f"hooks: {hook_name}", False, "missing")
+
+        # 4b. Check ~/.claude/settings.json for stale hook entries pointing to nonexistent paths
+        user_settings = Path.home() / ".claude" / "settings.json"
+        stale_hooks = []
+        if user_settings.exists():
+            import json as _json
+            try:
+                settings = _json.loads(user_settings.read_text(encoding="utf-8"))
+                for hook_list in settings.get("hooks", {}).values():
+                    if isinstance(hook_list, list):
+                        for hook in hook_list:
+                            cmd = hook.get("command", "") if isinstance(hook, dict) else ""
+                            # Extract file paths from the command
+                            for token in cmd.split():
+                                p = Path(token)
+                                if p.suffix in (".sh", "") and len(p.parts) > 2 and not p.exists():
+                                    stale_hooks.append(str(p))
+            except (ValueError, KeyError):
+                pass
+        check("hooks: no stale entries in ~/.claude/settings.json",
+              len(stale_hooks) == 0,
+              f"stale paths: {', '.join(stale_hooks[:3])}" if stale_hooks else "clean")
+
+        # 5. Python version
+        import platform
+        py_ver = platform.python_version()
+        major, minor = sys.version_info[:2]
+        check("python: version >= 3.8", major >= 3 and minor >= 8, py_ver)
+
+        # 6. write_text encoding (check installed plugin scripts)
+        import re as _re
+        import inspect
+        cli_src = Path(inspect.getfile(sys.modules[__name__]))
+        core_src = cli_src.parent / "core.py"
+        unencoded = 0
+        for src_file in [cli_src, core_src]:
+            if src_file.exists():
+                content = src_file.read_text(encoding="utf-8")
+                # Find all write_text/read_text calls (may span multiple lines)
+                for m in _re.finditer(r'\.(write_text|read_text)\(', content):
+                    # Find the matching closing paren
+                    start = m.end()
+                    depth = 1
+                    pos = start
+                    while pos < len(content) and depth > 0:
+                        if content[pos] == '(':
+                            depth += 1
+                        elif content[pos] == ')':
+                            depth -= 1
+                        pos += 1
+                    call_body = content[start:pos]
+                    if "encoding=" not in call_body:
+                        unencoded += 1
+        check("encoding: write_text/read_text have encoding=", unencoded == 0,
+              f"{unencoded} unencoded calls" if unencoded else "all encoded")
+
+        # 7. Gate echo truncation
+        has_truncation = False
+        for hd in hooks_dirs:
+            echo_hook = hd / "state-echo-hook"
+            if echo_hook.exists():
+                hook_content = echo_hook.read_text(encoding="utf-8")
+                has_truncation = "cut -c" in hook_content or "GATE_TEXT_STORE" in hook_content
+                break
+        check("hooks: gate text truncation", has_truncation,
+              "prevents recursive duplication" if has_truncation else "gate text may grow unbounded")
+
+        # Summary
+        total = passed + failed
+        print(f"\n{passed}/{total} checks passed", end="")
+        if failed:
+            print(f" ({failed} failed)")
+        else:
+            print()
 
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)

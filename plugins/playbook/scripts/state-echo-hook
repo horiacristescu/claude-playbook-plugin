@@ -91,6 +91,12 @@ while IFS= read -r line; do
     break
 done < <(grep -nE '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null)
 
+# Freehand mode: suppress drift counter and gate pressure when current gate is exactly "Freehand"
+IS_FREEHAND=false
+if [ "$GATE_TEXT" = "Freehand" ]; then
+    IS_FREEHAND=true
+fi
+
 # Make path relative to project
 REL_PATH="${TASK_FILE#$PROJECT_DIR/}"
 
@@ -99,7 +105,16 @@ GATE_LOG="$PROJECT_DIR/.agent/chat_log.md"
 REPEAT_MSG=""
 TRANSITION_MSG=""
 SKIP_MSG=""
-if [ -n "$GATE_LINE" ]; then
+if [ -n "$GATE_LINE" ] && [ "$IS_FREEHAND" = true ]; then
+    # Freehand mode: no counter increment, no repeat warning, no transition logging
+    NEW_COUNT=0
+    GATE_KEY="${TASK}:${GATE_LINE}"
+    if [ "$AGENT_WRITABLE" = true ]; then
+        write_counter "$COUNTER_FILE" gate_key "$GATE_KEY"
+        write_counter "$COUNTER_FILE" gate_count "0"
+        write_counter "$COUNTER_FILE" gate_text "$GATE_TEXT"
+    fi
+elif [ -n "$GATE_LINE" ]; then
     GATE_KEY="${TASK}:${GATE_LINE}"
     PREV_KEY=$(read_counter "$COUNTER_FILE" gate_key)
     PREV_COUNT=$(read_counter "$COUNTER_FILE" gate_count)
@@ -171,7 +186,11 @@ else
     fi
 fi
 
-CONTEXT=$(format_context "$TASK" "$DONE_GATES" "$TOTAL_GATES" "${GATE_TEXT}${REPEAT_MSG}" "$GATE_LINE" "$REL_PATH")
+if [ "$IS_FREEHAND" = true ]; then
+    CONTEXT="# [${TASK}] Freehand mode — wait for user instructions. Close only when user says done."
+else
+    CONTEXT=$(format_context "$TASK" "$DONE_GATES" "$TOTAL_GATES" "${GATE_TEXT}${REPEAT_MSG}" "$GATE_LINE" "$REL_PATH")
+fi
 if [ -n "$TRANSITION_MSG" ]; then
     CONTEXT="${TRANSITION_MSG}
 ${CONTEXT}"

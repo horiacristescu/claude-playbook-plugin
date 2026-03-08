@@ -120,6 +120,7 @@ def judge_section() -> str:
     return """\
 ## Plan Review
 - [ ] Run `.claude/bin/tasks plan-review <N>` — wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates. **Justify lens:** does every work gate trace up to something in Intent/Design? Are there gates that justify nothing above them (scope creep)? Intent claims with no gate to satisfy them (gaps)?
+- [ ] *(Optional)* Run `.claude/bin/tasks panel-review <N>` for multi-model panel (writes to judge.md, not this file). Read judge.md with user, accept/reject findings, apply selected advice to Work Plan.
 
 (plan review findings appear here)
 
@@ -142,6 +143,7 @@ def judge_impl_section() -> str:
     return """\
 ## Implementation Review
 - [ ] Run `.claude/bin/tasks impl-review <N>` — wait for it to finish (it edits this file). Re-read findings. **Satisfy lens:** does every Intent claim trace down through code to tests? Where does the chain break?
+- [ ] *(Optional)* Run `.claude/bin/tasks panel-review <N> --mode impl` for multi-model panel review.
 
 (implementation review findings appear here)
 
@@ -221,6 +223,50 @@ def impl_review_prompt(task_path: str, inline_context: bool = False) -> str:
         "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
         f"Then edit {task_path}: "
         "(1) in the '## Implementation Review' section, replace the '(implementation review findings appear here)' placeholder with your findings — this is idempotent on reruns (if the placeholder was already replaced, replace the existing findings)."
+    )
+
+
+def panel_plan_review_prompt(task_path: str, inline_context: bool = False) -> str:
+    """Panel judge prompt for plan review — writes to stdout, never edits task.md."""
+    context_location = "provided below" if inline_context else "provided in your system prompt"
+    intent_check = _intent_check(task_path)
+
+    return (
+        "You are a senior engineer reviewing a PLAN — no code has been written yet. "
+        f"The MIND_MAP.md and task.md are {context_location}. "
+        "Read the source files referenced in the plan to understand existing patterns. "
+        f"{intent_check}"
+        "Then critique the plan through four lenses: "
+        "(1) Intent alignment — will this approach actually fulfill the stated Intent? What's missing or underspecified? "
+        "(2) Failure modes — what will go wrong that isn't addressed? Construct a concrete failing scenario. "
+        "(3) Simplify — is anything over-engineered? What can be dropped? "
+        "(4) Prove it — cite file:line evidence for claims about existing code. No hand-waving. "
+        "Be specific and adversarial — your job is to find problems, not approve. "
+        "Max 5 findings, Critical and Important only — drop Minor. "
+        "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
+        "DO NOT edit any files. Output your findings to stdout only."
+    )
+
+
+def panel_impl_review_prompt(task_path: str, inline_context: bool = False) -> str:
+    """Panel judge prompt for impl review — writes to stdout, never edits task.md."""
+    context_location = "provided below" if inline_context else "provided in your system prompt"
+    intent_check = _intent_check(task_path)
+
+    return (
+        "You are a senior engineer reviewing a COMPLETED implementation. "
+        f"The MIND_MAP.md and task.md are {context_location}. "
+        "Read the source files changed by this task (look at the Work Plan gates for paths). "
+        f"{intent_check}"
+        "Review through four lenses: "
+        "(1) Simplify — what's unnecessary or over-engineered? What can be removed? "
+        "(2) Self-critique — does the code actually fulfill the stated Intent? What would a skeptic say? "
+        "(3) Bug scan — find actual bugs, edge cases, race conditions, or security issues. "
+        "(4) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
+        "Be specific and adversarial — your job is to find problems, not approve. "
+        "Max 5 findings, Critical and Important only — drop Minor. "
+        "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
+        "DO NOT edit any files. Output your findings to stdout only."
     )
 
 
@@ -340,6 +386,7 @@ Commands:
   status              Show head position for active tasks
   plan-review <number>   Run blind plan review on a task
   impl-review <number>   Run blind implementation review on a task
+  doctor              Run diagnostic checks on harness health
 
 Task types: {types}
 
