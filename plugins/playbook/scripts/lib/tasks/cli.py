@@ -17,6 +17,92 @@ def _state_file(project_path: Path) -> Path:
     return agent_dir / "current_state"
 
 
+def _capture_recent_chat(project_path: Path, max_messages: int = 10,
+                         max_gap_seconds: int = 10800) -> list[str]:
+    """Capture recent chat_log messages for task attribution.
+
+    Scans backwards from end of chat_log.md. Stops at:
+    - Previous 'tasks done' or 'tasks work done' in message text
+    - A time gap > max_gap_seconds (default 3h) between consecutive messages
+    - max_messages reached (default 10)
+
+    Returns list of message blocks (most recent last), each as:
+    "**[MNNN]** [timestamp]\\n<text truncated to 200 chars>"
+    """
+    import re
+    from datetime import datetime
+
+    chat_log = project_path / ".agent" / "chat_log.md"
+    if not chat_log.exists():
+        return []
+
+    content = chat_log.read_text(encoding="utf-8")
+    # Split into message blocks on --- separator
+    msg_pattern = re.compile(
+        r'\*\*\[(M\d+)\]\*\*\s+\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC\]\s+`\w+`\s*\n\s*\n(.*?)(?=\n---|\Z)',
+        re.DOTALL
+    )
+
+    messages = []
+    for m in msg_pattern.finditer(content):
+        msg_id = m.group(1)
+        timestamp_str = m.group(2)
+        text = m.group(3).strip()
+        try:
+            ts = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        messages.append((msg_id, ts, timestamp_str, text))
+
+    if not messages:
+        return []
+
+    # Scan backwards
+    captured = []
+    prev_ts = None
+    for msg_id, ts, ts_str, text in reversed(messages):
+        # Stop at time gap
+        if prev_ts is not None:
+            gap = (prev_ts - ts).total_seconds()
+            if gap > max_gap_seconds:
+                break
+        prev_ts = ts
+
+        # Stop at task-done marker
+        text_lower = text.lower()
+        if "tasks done" in text_lower or "tasks work done" in text_lower:
+            break
+
+        # Truncate long messages
+        display_text = text[:200] + "..." if len(text) > 200 else text
+        captured.append(f"**[{msg_id}]** [{ts_str}]\n{display_text}")
+
+        if len(captured) >= max_messages:
+            break
+
+    # Reverse to chronological order
+    captured.reverse()
+    return captured
+
+
+def _inject_chat_into_task(task_file: Path, messages: list[str]) -> None:
+    """Inject captured chat messages into task.md References section."""
+    if not messages:
+        return
+
+    content = task_file.read_text(encoding="utf-8")
+
+    chat_block = "\n### Recent Chat (auto-captured at activation — review and remove unrelated)\n"
+    for msg in messages:
+        chat_block += f"\n{msg}\n"
+
+    # Insert after the first --- (end of References section, before Design Phase)
+    first_sep = content.find("\n---\n")
+    if first_sep >= 0:
+        content = content[:first_sep] + "\n" + chat_block + content[first_sep:]
+        task_file.write_text(content, encoding="utf-8")
+
+
 def _load_mind_map(project_path: Path, max_chars: int = 25000) -> str | None:
     """Load MIND_MAP.md content. If over max_chars, keep head + tail, drop middle.
 
@@ -216,6 +302,12 @@ def main():
         print("=== WORKFLOW ===")
         print(workflow_briefing())
         print()
+
+        # Capture recent chat messages into task.md
+        recent_chat = _capture_recent_chat(project_path)
+        if recent_chat:
+            _inject_chat_into_task(task_file, recent_chat)
+            print(f"Captured {len(recent_chat)} recent chat message(s) into References.")
 
         # Print the full task file
         print(task_file.read_text(encoding="utf-8").rstrip())

@@ -47,7 +47,6 @@ def intent_why_refs(playbook: str) -> str:
 
 ## References
 - [ ] Context: `grep -Ein "keyword1|keyword2" MIND_MAP.md` \u2192 paste relevant excerpts below
-- Origin: Mxxx
 - Playbook: {playbook}
 - Note: Don't hardcode task numbers in plans \u2014 `.claude/bin/tasks new` auto-increments.
 
@@ -66,7 +65,7 @@ def design_phase_intro() -> str:
 def chat_log_research() -> str:
     return """\
 ### Chat Log Research
-- [ ] Scan for user context: Run `tasks context <N>` to get attributed messages. If no results, scan recent chat: `grep -E '^\\*\\*\\[M' .agent/chat_log.md | tail -20 | sed 's/\\*\\*//g' | cut -c -200`. Pull useful details — user quotes, constraints, context — into the References section above. The user's actual words are the ground truth for Intent."""
+- [ ] Review the "Recent Chat" messages captured in References (auto-injected at `tasks work`). Remove unrelated ones. Pull key user quotes, constraints, and context into Intent/Why above. The user's actual words are the ground truth for Intent."""
 
 
 def understand() -> str:
