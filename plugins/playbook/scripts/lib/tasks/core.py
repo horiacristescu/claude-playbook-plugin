@@ -9,6 +9,7 @@ VERSION = "1.1.0"
 # Task type → pattern name in playbook skill
 PLAYBOOKS = {
     "feature": "Build",
+    "build": "Build",
     "bugfix": "Fix",
     "refactor": "Build",
     "cleanup": "Fix",

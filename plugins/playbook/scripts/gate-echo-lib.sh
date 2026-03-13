@@ -79,14 +79,16 @@ read_counter() {
 
 # write_counter FILE KEY VALUE
 # Set a key=value in the counter file. Creates file if missing, updates in-place if key exists.
+# Uses grep-filter-append instead of sed to avoid delimiter collisions with gate text
+# containing |, backticks, or other special characters.
 write_counter() {
     local file="$1" key="$2" value="$3"
-    if [ -f "$file" ] && grep -q "^${key}=" "$file" 2>/dev/null; then
-        # Update existing key — use | as sed delimiter since values won't contain it
-        sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file" && rm -f "$file.bak"
-    else
-        echo "${key}=${value}" >> "$file"
+    local tmp="${file}.tmp.$$"
+    if [ -f "$file" ]; then
+        grep -v "^${key}=" "$file" > "$tmp" 2>/dev/null || true
     fi
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    mv "$tmp" "$file"
 }
 
 # reset_counters FILE
