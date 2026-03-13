@@ -126,6 +126,36 @@ format_context() {
     fi
 }
 
+# write_log_append INPUT_JSON PROJECT_DIR
+# Appends the written file's content to the persistent write log.
+# Called from PostToolUse for Write/Edit tools. Extracts file_path from
+# the tool input JSON, reads the file, appends with timestamp.
+# Log lives at ~/.local/share/playbook/<project-slug>/write_log
+# — outside the project tree so agent can't accidentally delete it.
+write_log_append() {
+    local input="$1" project_dir="$2"
+    local file_path
+    file_path=$(echo "$input" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
+    if [ -z "$file_path" ] || [ ! -f "$file_path" ]; then
+        return 0
+    fi
+    # Project slug: absolute path with / replaced by -
+    local slug
+    slug=$(echo "$project_dir" | sed 's|^/||; s|/|-|g')
+    local log_dir="$HOME/.local/share/playbook/$slug"
+    mkdir -p "$log_dir"
+    local log_file="$log_dir/write_log"
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local size
+    size=$(wc -c < "$file_path" 2>/dev/null | tr -d ' ')
+    {
+        printf '=== %s %s (%s bytes) ===\n' "$ts" "$file_path" "$size"
+        cat "$file_path"
+        printf '\n'
+    } >> "$log_file"
+}
+
 # create_wrapper PROJECT_DIR WRAPPER_NAME
 # Creates .claude/bin/<WRAPPER_NAME> as a find-based wrapper that locates
 # the plugin's scripts/<WRAPPER_NAME> and execs into it.

@@ -1,16 +1,68 @@
 #!/bin/bash
 # bin/sandbox — launch claude with filesystem write containment
 #
-# Usage: bin/sandbox [claude-args...]
+# Usage: bin/sandbox [--rw PATH]... [-- claude-args...]
 #
-# Wraps `claude` in a seatbelt sandbox (macOS) that confines writes to
-# the project directory. Writes outside the project are blocked at the
-# kernel level. .git/ is read-only even within the project.
+# Wraps `claude` in a seatbelt sandbox (macOS) or bubblewrap (Linux) that
+# confines writes to the project directory. Writes outside the project are
+# blocked at the kernel level. .git/ is read-only even within the project.
+#
+# Options:
+#   --rw PATH   Add a read-write path (can be repeated)
+#   --no-hooks  Disable all plugin hooks (clean isolated run)
+#   --          Everything after this goes to claude as arguments
+#
+# Examples:
+#   bin/sandbox                           # default: project dir writable
+#   bin/sandbox --rw /tmp/data -- -p "do stuff"
+#   bin/sandbox --rw ~/datasets --rw /tmp/scratch
+#   bin/sandbox --no-hooks -- -p "analyze this codebase"
+#   bin/sandbox --no-hooks --rw /tmp/output -- -p "generate report"
 #
 # Same paths, same venv, same node_modules, same claude — no Docker.
 # Must be run from inside a git repository.
 
 set -e
+
+# --- Parse arguments ---
+RW_PATHS=()
+CLAUDE_ARGS=()
+NO_HOOKS=false
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --rw)
+            shift
+            if [ -z "$1" ]; then
+                echo "Error: --rw requires a path argument" >&2
+                exit 1
+            fi
+            # Resolve to absolute path
+            RW_PATHS+=("$(cd "$1" 2>/dev/null && pwd -P || echo "$1")")
+            shift
+            ;;
+        --no-hooks)
+            NO_HOOKS=true
+            shift
+            ;;
+        --)
+            shift
+            CLAUDE_ARGS=("$@")
+            break
+            ;;
+        *)
+            CLAUDE_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# --- No-hooks: create empty settings file ---
+SETTINGS_ARGS=()
+if [ "$NO_HOOKS" = true ]; then
+    NOHOOKS_FILE="/tmp/playbook-no-hooks-$$.json"
+    echo '{}' > "$NOHOOKS_FILE"
+    SETTINGS_ARGS=(--settings "$NOHOOKS_FILE")
+fi
 
 # --- Find project root and .git directory (absolute paths) ---
 GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)" || {
@@ -33,6 +85,13 @@ case "$(uname -s)" in
         # Then deny .git writes even within project dir
         # Note: macOS resolves /var → /private/var, so use /private/var/folders
         # Note: ~/.claude.json* lives at $HOME root, use regex to match both .claude/ and .claude.json*
+        # Build --rw exceptions for seatbelt profile
+        RW_EXCEPTIONS=""
+        for rw in "${RW_PATHS[@]}"; do
+            RW_EXCEPTIONS="${RW_EXCEPTIONS}
+        (require-not (subpath \"$rw\"))"
+        done
+
         PROFILE="(version 1)
 (allow default)
 (deny file-write*
@@ -46,7 +105,7 @@ case "$(uname -s)" in
         (require-not (subpath \"$HOME_DIR/.cache\"))
         (require-not (subpath \"$HOME_DIR/.local\"))
         (require-not (subpath \"$HOME_DIR/Library\"))
-        (require-not (subpath \"/dev\"))
+        (require-not (subpath \"/dev\"))${RW_EXCEPTIONS}
     )
 )
 (deny file-write* (subpath \"$GIT_DIR\"))"
@@ -54,25 +113,49 @@ case "$(uname -s)" in
         echo "Launching claude with write containment (seatbelt)"
         echo "  project: $PROJECT_DIR (read-write)"
         echo "  .git:    $GIT_DIR (read-only)"
+        for rw in "${RW_PATHS[@]}"; do
+            echo "  rw:      $rw"
+        done
+        [ "$NO_HOOKS" = true ] && echo "  hooks:   disabled"
         echo "  outside: blocked"
         echo ""
         # Redirect tool caches to /tmp — Claude Code's inner sandbox blocks ~/.cache
         export UV_CACHE_DIR="/tmp/uv-cache"
+        # --no-hooks overrides sandbox-hooks.json; default uses project's sandbox hooks
+        if [ ${#SETTINGS_ARGS[@]} -eq 0 ]; then
+            SETTINGS_ARGS=(--settings .claude/sandbox-hooks.json)
+        fi
         exec sandbox-exec -p "$PROFILE" claude \
             --dangerously-skip-permissions \
-            --settings .claude/sandbox-hooks.json \
-            "$@"
+            "${SETTINGS_ARGS[@]}" \
+            "${CLAUDE_ARGS[@]}"
         ;;
 
     Linux)
         if command -v bwrap &>/dev/null; then
+            WRITE_LOG_DIR="$HOME_DIR/.local/share/playbook"
+            mkdir -p "$WRITE_LOG_DIR"
+            # Build bwrap command with --rw paths
+            BWRAP_CMD=(bwrap
+                --bind / /
+                --proc /proc
+                --dev /dev
+                --ro-bind "$GIT_DIR" "$GIT_DIR"
+                --bind "$WRITE_LOG_DIR" "$WRITE_LOG_DIR"
+            )
+            for rw in "${RW_PATHS[@]}"; do
+                mkdir -p "$rw"
+                BWRAP_CMD+=(--bind "$rw" "$rw")
+            done
+            BWRAP_CMD+=(claude --dangerously-skip-permissions "${SETTINGS_ARGS[@]}" "${CLAUDE_ARGS[@]}")
             echo "Launching claude with .git protection (bubblewrap)"
             echo "  .git: $GIT_DIR (read-only)"
+            for rw in "${RW_PATHS[@]}"; do
+                echo "  rw:   $rw"
+            done
+            [ "$NO_HOOKS" = true ] && echo "  hooks: disabled"
             echo ""
-            exec bwrap \
-                --bind / / \
-                --ro-bind "$GIT_DIR" "$GIT_DIR" \
-                claude "$@"
+            exec "${BWRAP_CMD[@]}"
         else
             echo "Error: bubblewrap (bwrap) not found" >&2
             echo "Install: apt install bubblewrap" >&2
