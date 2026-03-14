@@ -326,7 +326,7 @@ def main():
         from tasks.core import list_all_types, _find_custom_playbook
         project_path_for_check = find_project_root()
         is_custom = _find_custom_playbook(project_path_for_check, task_type) is not None
-        if task_type not in PLAYBOOKS and not is_custom:
+        if task_type not in PLAYBOOKS and task_type != "quick" and not is_custom:
             all_types = list_all_types(project_path_for_check)
             print(f"Error: unknown type '{task_type}'", file=sys.stderr)
             print(f"Types: {', '.join(all_types)}", file=sys.stderr)
@@ -358,28 +358,30 @@ def main():
         task_num = task_num_match.group(1) if task_num_match else "?"
 
         print(f"Created: {task_file.relative_to(project_path)}")
-        print(f"Pattern: {pattern_name}")
+        if task_type != "quick":
+            print(f"Pattern: {pattern_name}")
         print(f"Next: fill in task.md gates, then ask user to run: tasks work {task_num}")
         print()
 
-        # Print full playbook so agent has workflow guidance inline
-        playbook_path = _find_playbook_skill(project_path)
-        if playbook_path:
-            playbook_file = Path(playbook_path)
-            if playbook_file.exists():
-                print("=== PLAYBOOK (task.md design guide) ===")
-                print("Use this to improve your task.md: select patterns and gates as appropriate,")
-                print("or invent new ones. This is a starting point — expand as needed.")
-                print()
-                content = playbook_file.read_text(encoding="utf-8")
-                # Strip sections not relevant to task design
-                for marker in ["## Mind Map", "> Evidence base:"]:
-                    idx = content.find(marker)
-                    if idx > 0:
-                        content = content[:idx]
-                print(content.rstrip())
-                print()
-                print(f"Now fill in {task_file.relative_to(project_path)} — design a good task.md.")
+        if task_type != "quick":
+            # Print full playbook so agent has workflow guidance inline
+            playbook_path = _find_playbook_skill(project_path)
+            if playbook_path:
+                playbook_file = Path(playbook_path)
+                if playbook_file.exists():
+                    print("=== PLAYBOOK (task.md design guide) ===")
+                    print("Use this to improve your task.md: select patterns and gates as appropriate,")
+                    print("or invent new ones. This is a starting point — expand as needed.")
+                    print()
+                    content = playbook_file.read_text(encoding="utf-8")
+                    # Strip sections not relevant to task design
+                    for marker in ["## Mind Map", "> Evidence base:"]:
+                        idx = content.find(marker)
+                        if idx > 0:
+                            content = content[:idx]
+                    print(content.rstrip())
+                    print()
+                    print(f"Now fill in {task_file.relative_to(project_path)} — design a good task.md.")
 
     elif cmd == "init":
         # Target directory: argument or cwd

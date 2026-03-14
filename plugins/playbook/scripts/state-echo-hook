@@ -7,6 +7,32 @@
 
 set -e
 
+# Rotating micro-reflection nudges — one shown per tool call, indexed by gate_count.
+# Taxonomy: direction, effort, scope, progress, quality, awareness, plan integrity.
+# Ordered for maximum contrast — adjacent nudges from different categories.
+# Categories: D=direction, E=effort, S=scope, P=progress, Q=quality, A=awareness, R=replan, T=testing
+NUDGES=(
+    "Still solving the stated problem?"               # D
+    "Could this be simpler?"                           # E
+    "Any new gates I should add for what I just discovered?"  # R
+    "Would a reviewer accept this?"                    # Q
+    "Making progress or going in circles?"             # P
+    "Is this in scope or drifting?"                    # S
+    "Have you verified, or are you assuming?"           # T
+    "What's the risk I'm not seeing?"                  # A
+    "Does the plan still match what I'm finding?"      # R
+    "Right level of effort for this gate?"             # E
+    "What did the user actually ask for?"              # D
+    "How would you test this?"                         # T
+    "What's different from 3 tool calls ago?"          # P
+    "Should this gate be split or reworded?"           # R
+    "Would this survive a 'why did you do this?' question?"  # S
+    "If I were wrong, how would I know?"               # A
+    "Am I polishing or progressing?"                   # E
+    "Any assumptions I haven't checked?"               # Q
+    "Do I need to replan, or push through?"            # R
+)
+
 # Source shared lib (same directory)
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$HOOK_DIR/gate-echo-lib.sh"
@@ -108,7 +134,6 @@ REL_PATH="${TASK_FILE#$PROJECT_DIR/}"
 
 # Repetition detection + gate transition logging (using consolidated counter file)
 GATE_LOG="$PROJECT_DIR/.agent/chat_log.md"
-REPEAT_MSG=""
 TRANSITION_MSG=""
 SKIP_MSG=""
 if [ -n "$GATE_LINE" ] && [ "$IS_FREEHAND" = true ]; then
@@ -166,9 +191,6 @@ elif [ -n "$GATE_LINE" ]; then
         write_counter "$COUNTER_FILE" gate_count "$NEW_COUNT"
         write_counter "$COUNTER_FILE" gate_text "$GATE_TEXT"
     fi
-    if [ "$NEW_COUNT" -ge 10 ]; then
-        REPEAT_MSG=" (same gate ${NEW_COUNT}x — are you stuck? edit the gate or replan: ${REL_PATH})"
-    fi
 else
     # All gates done — log final gate if exists, clean up gate_* counters
     PREV_KEY=$(read_counter "$COUNTER_FILE" gate_key)
@@ -195,7 +217,7 @@ fi
 if [ "$IS_FREEHAND" = true ]; then
     CONTEXT="# [${TASK}] Freehand mode — wait for user instructions. Close only when user says done."
 else
-    CONTEXT=$(format_context "$TASK" "$DONE_GATES" "$TOTAL_GATES" "${GATE_TEXT}${REPEAT_MSG}" "$GATE_LINE" "$REL_PATH")
+    CONTEXT=$(format_context "$TASK" "$DONE_GATES" "$TOTAL_GATES" "${GATE_TEXT}" "$GATE_LINE" "$REL_PATH")
 fi
 if [ -n "$TRANSITION_MSG" ]; then
     CONTEXT="${TRANSITION_MSG}
@@ -206,6 +228,12 @@ if [ -n "$SKIP_MSG" ]; then
 fi
 if [ -n "$BARE_MSG" ]; then
     CONTEXT="${CONTEXT}${BARE_MSG}"
+fi
+# Rotating nudge — one per tool call while a gate is active
+if [ -n "$GATE_LINE" ] && [ "$IS_FREEHAND" != true ] && [ "${#NUDGES[@]}" -gt 0 ]; then
+    NUDGE_IDX=$(( (NEW_COUNT - 1) % ${#NUDGES[@]} ))
+    CONTEXT="${CONTEXT}
+# 💭 ${NUDGES[$NUDGE_IDX]}"
 fi
 
 # Format as hook JSON

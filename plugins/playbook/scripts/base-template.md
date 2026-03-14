@@ -61,7 +61,7 @@ pending
 ## Work Plan
 
 > For each work section: what could go wrong? How will you know it worked? (specific check, not "looks good")
-> Standard feature: 6-8 work gates + tests. If >15 gates, validate the approach first.
+> Standard feature: 6-8 work gates + tests. Large tasks work fine — if >15 gates, add a mid-point checkpoint to reassess direction.
 
 (write work gates here)
 

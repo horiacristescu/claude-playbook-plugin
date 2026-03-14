@@ -77,8 +77,9 @@ it matters and how to do it well:
 - **Write task-specific checkpoint questions at authoring time.** Bad: "is this
   working?" Good: "Does the output include the progress counter?" The quality
   of checkpoints is determined at task creation, not during execution.
-- **If >15 gates or uncertain approach:** add Decide gates before Build. Don't
-  plan 20 steps in the dark.
+- **If >15 gates or uncertain approach:** add a mid-point checkpoint to reassess
+  direction. Large tasks work fine with hook enforcement — the checkpoint is for
+  catching misframing early, not a gate count limit.
 
 The Design Phase is orientation, not ceremony. Complete it quickly but honestly.
 The goal is to catch misframing (picking the wrong pattern), overscoping

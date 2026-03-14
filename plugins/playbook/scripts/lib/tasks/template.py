@@ -81,7 +81,7 @@ def understand() -> str:
 def structure() -> str:
     return """\
 ### Structure
-- [ ] What kind of work is this? (build / investigate / evaluate / decide / combination?) If combination, what's the sequence? If >15 gates or uncertain approach, where do you stop and validate direction?"""
+- [ ] What kind of work is this? (build / investigate / evaluate / decide / combination?) If combination, what's the sequence? If >15 gates or uncertain approach, pick a checkpoint where you pause and reassess direction before continuing."""
 
 
 def reflection_gates() -> str:
@@ -131,7 +131,7 @@ def work_plan() -> str:
 ## Work Plan
 
 > For each work section: what could go wrong? How will you know it worked? (specific check, not "looks good")
-> Standard feature: 6-8 work gates + tests. If >15 gates, validate the approach first.
+> Standard feature: 6-8 work gates + tests. Large tasks work fine — if >15 gates, add a mid-point checkpoint to reassess direction.
 
 (write work gates here)
 
@@ -466,7 +466,7 @@ Tasks CLI:
 
 def usage_text() -> str:
     """Usage text for `tasks --help`."""
-    types = ", ".join(sorted(PLAYBOOKS.keys()))
+    types = ", ".join(sorted(set(PLAYBOOKS.keys()) | {"quick"}))
     return f"""\
 Usage: tasks <command> [args]
 
@@ -492,6 +492,26 @@ Examples:
 
 # ---------------------------------------------------------------------------
 # Composition
+def sticker_quick() -> str:
+    return """\
+> **Gate discipline:** One gate \u2192 do work \u2192 check box \u2192 next gate.
+> Never batch. Never backfill. The document IS the execution trace."""
+
+
+def render_quick_template(num: int, title: str) -> str:
+    """Minimal task.md for sub-hour fixes and small work. ~3 gates, no ceremony."""
+    parts = [
+        header(num, title),
+        sticker_quick(),
+        status(),
+        "## Intent\n(one line — what to do and how to verify)",
+        "---",
+        "## Work\n- [ ] Do the work\n- [ ] Test: verify it worked\n- [ ] Cleanup: mind map, commit",
+        "## Parked\n(out of scope discoveries)",
+    ]
+    return "\n\n".join(parts) + "\n"
+
+
 # ---------------------------------------------------------------------------
 
 def render_template(num: int, title: str, task_type: str | None = None) -> str:
@@ -505,6 +525,10 @@ def render_template(num: int, title: str, task_type: str | None = None) -> str:
     Returns:
         Complete task.md content as a string
     """
+    # Quick template — standalone, no PLAYBOOKS lookup
+    if task_type == "quick":
+        return render_quick_template(num, title)
+
     pattern_name = PLAYBOOKS.get(task_type) if task_type else None
     playbook_ref = f"playbook/{pattern_name}" if pattern_name else "(none)"
 
