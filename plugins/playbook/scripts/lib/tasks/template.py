@@ -149,6 +149,12 @@ def judge_impl_section() -> str:
 ---"""
 
 
+def debrief() -> str:
+    return """\
+## Debrief
+- [ ] Freehand — work is done, stay for discussion with user. Remove this gate during Design Phase if running headless or task doesn't need debrief."""
+
+
 def pre_review() -> str:
     return """\
 ## Pre-review
@@ -575,6 +581,7 @@ def render_template(num: int, title: str, task_type: str | None = None) -> str:
         intent_why_refs(playbook_ref),
     ]
     common_end = [
+        debrief(),
         pre_review(),
         parked(),
         standing_orders(),
