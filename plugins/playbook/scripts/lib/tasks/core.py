@@ -20,6 +20,7 @@ PLAYBOOKS = {
 }
 
 
+
 def _slugify(name: str) -> str:
     """Convert name to lowercase hyphen-separated slug."""
     slug = re.sub(r'[\s_]+', '-', name)
@@ -121,7 +122,8 @@ def list_all_types(project_path: Path) -> list[str]:
     return sorted(types)
 
 
-def create_task(project_path: Path, name: str, task_type: str | None = None) -> Path:
+def create_task(project_path: Path, name: str, task_type: str | None = None,
+                intent_text: str | None = None, stub: bool = False) -> Path:
     """Create a new task with the given name.
 
     Args:
@@ -130,6 +132,8 @@ def create_task(project_path: Path, name: str, task_type: str | None = None) -> 
         task_type: Task type (feature, bugfix, etc.) for playbook template.
             If a matching .agent/playbooks/<type>.md exists, uses that
             instead of the base Python template.
+        intent_text: Optional intent paragraph to pre-fill ## Intent section.
+        stub: If True, generate minimal stub (no gates) instead of full template.
 
     Returns:
         Path to the created task.md file
@@ -147,7 +151,15 @@ def create_task(project_path: Path, name: str, task_type: str | None = None) -> 
     # Check for custom playbook template first
     custom = _find_custom_playbook(project_path, task_type) if task_type else None
 
-    if custom:
+    if stub:
+        # Stub mode: minimal template with no gates
+        from tasks.template import render_stub_template
+        content = render_stub_template(
+            num=task_num, title=name.title(),
+            intent_text=intent_text or "",
+            task_type=task_type,
+        )
+    elif custom:
         content = custom.read_text(encoding="utf-8")
         content = content.replace("{{NNN}}", f"{task_num:03d}")
         content = content.replace("{{TITLE}}", name.title())
@@ -161,6 +173,17 @@ def create_task(project_path: Path, name: str, task_type: str | None = None) -> 
             role_template = _load_playbook(task_type, project_path)
             if role_template:
                 content += "\n" + role_template + "\n"
+
+    # Pre-fill Intent section if intent_text provided
+    if intent_text and not stub:
+        # Replace placeholder in all template variants
+        for placeholder in [
+            "(what we want to achieve \u2014 the outcome, not the activity)",
+            "(one line \u2014 what to do and how to verify)",
+        ]:
+            if placeholder in content:
+                content = content.replace(placeholder, intent_text)
+                break
 
     task_file = task_dir / "task.md"
     task_file.write_text(content, encoding="utf-8")

@@ -229,11 +229,10 @@ fi
 if [ -n "$BARE_MSG" ]; then
     CONTEXT="${CONTEXT}${BARE_MSG}"
 fi
-# Rotating nudge — one per tool call while a gate is active
+# Rotating nudge — appended to "Done?" line so it's visible in truncated display
 if [ -n "$GATE_LINE" ] && [ "$IS_FREEHAND" != true ] && [ "${#NUDGES[@]}" -gt 0 ]; then
     NUDGE_IDX=$(( (NEW_COUNT - 1) % ${#NUDGES[@]} ))
-    CONTEXT="${CONTEXT}
-# 💭 ${NUDGES[$NUDGE_IDX]}"
+    CONTEXT="${CONTEXT} — 💭 ${NUDGES[$NUDGE_IDX]}"
 fi
 
 # Format as hook JSON

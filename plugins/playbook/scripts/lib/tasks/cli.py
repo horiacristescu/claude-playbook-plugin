@@ -249,6 +249,9 @@ def main():
                     print(f"Note: task {task_num} was marked done — reopening.")
                     task_file = tf
                     # Fall through to activation below
+                elif "<!-- stub:" in tf.read_text(encoding="utf-8"):
+                    # Stub — allow activation, expansion happens below
+                    task_file = tf
                 else:
                     print(f"Task {task_num} has no open gates.", file=sys.stderr)
                     sys.exit(1)
@@ -297,6 +300,65 @@ def main():
             except OSError:
                 pass
 
+        # Expand stubs on activation
+        task_content = task_file.read_text(encoding="utf-8")
+        import re as _stub_re
+        stub_match = _stub_re.search(r'<!-- stub:(\w+) -->', task_content)
+        if stub_match:
+            stub_type = stub_match.group(1)
+            # Extract user's Intent and Why sections before expanding
+            def _extract_section(content, heading):
+                pattern = rf'^## {heading}\n(.*?)(?=\n## |\Z)'
+                m = _stub_re.search(pattern, content, _stub_re.MULTILINE | _stub_re.DOTALL)
+                return m.group(1).strip() if m else ""
+
+            user_intent = _extract_section(task_content, "Intent")
+            user_why = _extract_section(task_content, "Why")
+            user_refs = _extract_section(task_content, "References")
+
+            # Render full template
+            from tasks.template import render_template
+            task_num_int = int(task_num)
+            title = task_file.parent.name.split("-", 1)[1].replace("-", " ").title()
+            full_content = render_template(num=task_num_int, title=title, task_type=stub_type)
+
+            # F3: Append playbook role template (same as create_task)
+            from tasks.core import _load_playbook
+            role_template = _load_playbook(stub_type, project_path)
+            if role_template:
+                full_content += "\n" + role_template + "\n"
+
+            # Inject preserved user content
+            if user_intent:
+                # F2: Try both placeholder variants (build + quick)
+                for placeholder in [
+                    "(what we want to achieve \u2014 the outcome, not the activity)",
+                    "(one line \u2014 what to do and how to verify)",
+                ]:
+                    if placeholder in full_content:
+                        full_content = full_content.replace(placeholder, user_intent)
+                        break
+            if user_why:
+                full_content = full_content.replace(
+                    "(why this matters now \u2014 urgency, context, what breaks if delayed)",
+                    user_why,
+                )
+            # F1: Inject preserved references
+            if user_refs and "(optional)" not in user_refs.lower():
+                # Replace the default References content
+                full_content = _stub_re.sub(
+                    r'(## References\n).*?(?=\n---)',
+                    f'## References\n{user_refs}',
+                    full_content,
+                    count=1,
+                    flags=_stub_re.DOTALL,
+                )
+
+            task_file.write_text(full_content, encoding="utf-8")
+            # Re-read for chat injection and display
+            task_content = full_content
+            print(f"Expanded stub to full {stub_type} template.")
+
         # Workflow rules — deferred from bootstrap to task activation
         from tasks.template import workflow_briefing
         print("=== WORKFLOW ===")
@@ -314,9 +376,15 @@ def main():
 
 
     elif cmd == "new":
+        # Parse --stub flag
+        is_stub = False
+        if cmd_args and cmd_args[0] == "--stub":
+            is_stub = True
+            cmd_args = cmd_args[1:]
+
         if len(cmd_args) < 2:
             print("Error: 'new' requires a type and a name", file=sys.stderr)
-            print("Usage: tasks new <type> <name>", file=sys.stderr)
+            print("Usage: tasks new [--stub] <type> <name> [intent...]", file=sys.stderr)
             from tasks.core import list_all_types
             all_types = list_all_types(find_project_root())
             print(f"Types: {', '.join(all_types)}", file=sys.stderr)
@@ -332,7 +400,9 @@ def main():
             print(f"Types: {', '.join(all_types)}", file=sys.stderr)
             sys.exit(1)
 
-        task_name = " ".join(cmd_args[1:])
+        # args[1] = name, args[2:] = optional intent text
+        task_name = cmd_args[1]
+        intent_text = " ".join(cmd_args[2:]) if len(cmd_args) > 2 else None
         project_path = find_project_root()
 
         # Check if user included a task number prefix
@@ -350,7 +420,8 @@ def main():
                 print(f"Error: provided task number {provided_num:03d} doesn't match next number {next_num:03d}", file=sys.stderr)
                 print(f"Usage: tasks new {task_type} {num_match.group(2)}", file=sys.stderr)
                 sys.exit(1)
-        task_file = create_task(project_path, task_name, task_type=task_type)
+        task_file = create_task(project_path, task_name, task_type=task_type,
+                               intent_text=intent_text, stub=is_stub)
         pattern_name = PLAYBOOKS.get(task_type, f"custom ({task_type})")
 
         import re
@@ -358,9 +429,13 @@ def main():
         task_num = task_num_match.group(1) if task_num_match else "?"
 
         print(f"Created: {task_file.relative_to(project_path)}")
-        if task_type != "quick":
+        if is_stub:
+            print(f"Stub ({pattern_name}) — expand with: tasks work {task_num}")
+        elif task_type != "quick":
             print(f"Pattern: {pattern_name}")
-        print(f"Next: fill in task.md gates, then ask user to run: tasks work {task_num}")
+            print(f"Next: fill in task.md gates, then ask user to run: tasks work {task_num}")
+        else:
+            print(f"Next: fill in task.md gates, then ask user to run: tasks work {task_num}")
         print()
 
         if task_type != "quick":
@@ -583,6 +658,8 @@ def main():
                     env.pop("CLAUDE_CODE_SSE_PORT", None)
                     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
                     env.pop("CLAUDE_PROJECT_DIR", None)
+                    # --allowedTools suppresses plugin hook registration — intentional:
+                    # review agents are read-only evaluators, not task workers.
                     cmd_list = [
                         binary, "-p", prompt,
                         "--model", variant,
@@ -752,6 +829,10 @@ def main():
             env.pop("CLAUDE_CODE_ENTRYPOINT", None)
             env["PLAYBOOK_SESSION_ID"] = "judge"
 
+            # --dangerously-skip-permissions suppresses plugin hook registration —
+            # intentional: judge is a read-only evaluator (seatbelt-sandboxed on
+            # macOS), not a task worker. PLAYBOOK_SESSION_ID=judge above lets
+            # hooks identify judge sessions if needed.
             claude_args = [
                 claude_bin, "-p",
                 "--dangerously-skip-permissions",
@@ -1158,6 +1239,212 @@ def main():
         else:
             chat_log.write_text("".join(output), encoding="utf-8")
             print(f"Inserted {tags_inserted} tags into chat_log.md")
+
+    elif cmd == "retro":
+        project_path = find_project_root()
+        # Parse --since N flag
+        since = 0
+        i = 0
+        while i < len(cmd_args):
+            if cmd_args[i] == "--since" and i + 1 < len(cmd_args):
+                try:
+                    since = int(cmd_args[i + 1])
+                except ValueError:
+                    print(f"Error: --since requires a number", file=sys.stderr)
+                    sys.exit(1)
+                i += 2
+            else:
+                i += 1
+
+        from tasks.retro import (
+            extract_tasks, extract_chatlog, extract_mindmap,
+            build_task_windows,
+        )
+
+        tasks_dir = project_path / ".agent" / "tasks"
+        chatlog_path = project_path / ".agent" / "chat_log.md"
+        bash_history_path = project_path / ".agent" / "bash_history"
+        mindmap_path = project_path / "MIND_MAP.md"
+
+        # Extract data
+        tasks = extract_tasks(tasks_dir, since=since)
+        task_windows = build_task_windows(chatlog_path, bash_history_path)
+        chatlog = extract_chatlog(chatlog_path, task_windows)
+        mindmap = extract_mindmap(mindmap_path)
+
+        if not tasks:
+            print("No tasks found in window.", file=sys.stderr)
+            sys.exit(1)
+
+        # Build structural summary
+        report_lines = []
+        report_lines.append(f"# Retro: tasks {tasks[0]['number']:03d}–{tasks[-1]['number']:03d}")
+        report_lines.append(f"")
+        report_lines.append(f"**Window:** {len(tasks)} tasks, {len(chatlog)} chat messages, {len(mindmap)} mind map nodes")
+        report_lines.append(f"")
+
+        # Task summary table
+        report_lines.append("## Task Inventory")
+        report_lines.append("")
+        report_lines.append("| # | Title | Status | Gates | Bare | Parked | Type |")
+        report_lines.append("|---|-------|--------|-------|------|--------|------|")
+        total_gates = 0
+        total_checked = 0
+        total_bare = 0
+        total_parked = 0
+        for t in tasks:
+            total_gates += t["gate_count"]
+            total_checked += t["checked_count"]
+            total_bare += t["bare_checkmark_count"]
+            total_parked += len(t["parked_items"])
+            title_short = t["title"][:30]
+            report_lines.append(
+                f"| {t['number']:03d} | {title_short} | {t['status'][:7]} | "
+                f"{t['checked_count']}/{t['gate_count']} | {t['bare_checkmark_count']} | "
+                f"{len(t['parked_items'])} | {t['playbook_type']} |"
+            )
+        report_lines.append("")
+        report_lines.append(f"**Totals:** {total_checked}/{total_gates} gates checked, "
+                          f"{total_bare} bare checkmarks ({total_bare*100//max(total_checked,1)}%), "
+                          f"{total_parked} parked items")
+        report_lines.append("")
+
+        # --- Analysis passes ---
+        from tasks.retro import (
+            analyze_intent_health, analyze_steering,
+            analyze_garbage, analyze_mindmap,
+        )
+
+        # Pass 1: Intent health
+        health = analyze_intent_health(tasks)
+        report_lines.append("## Intent Health (ranked by hollowness)")
+        report_lines.append("")
+        report_lines.append("| # | Title | Hollowness | Intent | Bare% | Adaptation | Parked |")
+        report_lines.append("|---|-------|------------|--------|-------|------------|--------|")
+        for h in health:
+            intent_flag = "✓" if h["intent_present"] else "✗"
+            bare_pct = f"{h['bare_ratio']:.0%}"
+            adapt = f"{h['gate_adaptation']:+d}" if h["gate_adaptation"] != 0 else "="
+            report_lines.append(
+                f"| {h['number']:03d} | {h['title'][:25]} | {h['hollowness']:.2f} | "
+                f"{intent_flag} | {bare_pct} | {adapt} | {h['parked_count']} |"
+            )
+        report_lines.append("")
+
+        # Pass 2: Steering inventory
+        corrections = analyze_steering(chatlog)
+        report_lines.append("## Steering Inventory")
+        report_lines.append("")
+        if corrections:
+            report_lines.append(f"**{len(corrections)} corrections detected**")
+            report_lines.append("")
+            # Group by task
+            by_task: dict[int | None, list] = {}
+            for c in corrections:
+                by_task.setdefault(c["task"], []).append(c)
+            for task_num, corrs in sorted(by_task.items(), key=lambda x: len(x[1]), reverse=True):
+                label = f"T{task_num:03d}" if task_num else "unattributed"
+                report_lines.append(f"**{label}** ({len(corrs)} corrections):")
+                for c in corrs[:5]:  # show up to 5 per task
+                    text_preview = c["text"][:100].replace("\n", " ")
+                    report_lines.append(f"- [M{c['id']:03d}] {text_preview}")
+                if len(corrs) > 5:
+                    report_lines.append(f"- ... and {len(corrs) - 5} more")
+                report_lines.append("")
+            # Systemic check
+            heavy_steering = [tn for tn, cs in by_task.items() if len(cs) >= 3 and tn is not None]
+            if heavy_steering:
+                ids = ", ".join(f"T{tn:03d}" for tn in heavy_steering)
+                report_lines.append(f"**⚠ Heavy steering (3+ corrections):** {ids}")
+                report_lines.append("")
+        else:
+            report_lines.append("No steering corrections detected in window.")
+            report_lines.append("")
+
+        # Pass 3: Garbage collection
+        gc = analyze_garbage(tasks)
+        report_lines.append("## Garbage Collection")
+        report_lines.append("")
+
+        if gc["parked"]:
+            report_lines.append("### Parked Items")
+            report_lines.append("")
+            for p in gc["parked"]:
+                marker = "✓ pursued" if p["status"] == "pursued" else "⏳ still-waiting"
+                report_lines.append(f"- **T{p['task']:03d}** [{marker}]: {p['text'][:120]}")
+            report_lines.append("")
+
+        if gc["pending"]:
+            report_lines.append("### Pending Tasks")
+            report_lines.append("")
+            for p in gc["pending"]:
+                work_flag = "(has progress)" if p["has_work"] else "(not started)"
+                report_lines.append(f"- **T{p['number']:03d}** ({p['title']}): {p['gates']} gates {work_flag}")
+            report_lines.append("")
+
+        if gc["loose_ends"]:
+            report_lines.append("### Loose Ends")
+            report_lines.append("")
+            for le in gc["loose_ends"]:
+                if "unchecked" in le:
+                    report_lines.append(f"- **T{le['number']:03d}** ({le['title']}): done but {le['unchecked']} unchecked gates")
+                elif "issue" in le:
+                    report_lines.append(f"- **T{le['number']:03d}** ({le['title']}): {le['issue']}")
+            report_lines.append("")
+
+        if not gc["parked"] and not gc["pending"] and not gc["loose_ends"]:
+            report_lines.append("No garbage to collect.")
+            report_lines.append("")
+
+        # Pass 4: Mind map reconciliation
+        mm_proposals = analyze_mindmap(mindmap)
+        total_size = sum(n["size"] for n in mindmap)
+        report_lines.append("## Mind Map Reconciliation")
+        report_lines.append("")
+        report_lines.append(f"**{len(mindmap)} nodes, {total_size:,} bytes** (target: <10,000)")
+        report_lines.append("")
+        if mm_proposals:
+            report_lines.append("| Node | Size | Proposal | Reason |")
+            report_lines.append("|------|------|----------|--------|")
+            for p in mm_proposals:
+                preview = p["text_preview"][:40].replace("|", "\\|")
+                report_lines.append(f"| [{p['id']}] {preview} | {p['size']} | {p['proposal']} | {p['reason'][:60]} |")
+            report_lines.append("")
+        else:
+            report_lines.append("No proposals — mind map is within targets.")
+            report_lines.append("")
+
+        # Questions for user
+        report_lines.append("## Questions for User")
+        report_lines.append("")
+        questions = []
+        if gc["pending"]:
+            not_started = [p for p in gc["pending"] if not p["has_work"]]
+            if not_started:
+                ids = ", ".join(f"T{p['number']:03d}" for p in not_started)
+                questions.append(f"Pending tasks never started: {ids} — still relevant, or abandon?")
+        still_waiting = [p for p in gc["parked"] if p["status"] == "still-waiting"]
+        if still_waiting:
+            questions.append(f"{len(still_waiting)} parked item(s) never pursued — file as tasks or discard?")
+        if total_size > 10000:
+            questions.append(f"Mind map is {total_size:,} bytes ({total_size - 10000:,} over target) — run /mindmap-optimize?")
+        if not questions:
+            questions.append("No unresolved questions.")
+        for q in questions:
+            report_lines.append(f"- {q}")
+        report_lines.append("")
+
+        report = "\n".join(report_lines)
+
+        # Output to stdout
+        print(report)
+
+        # Save to file
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        retro_file = project_path / ".agent" / f"retro-{ts}.md"
+        retro_file.write_text(report, encoding="utf-8")
+        print(f"\nSaved: {retro_file.relative_to(project_path)}", file=sys.stderr)
 
     elif cmd == "status":
         project_path = find_project_root()

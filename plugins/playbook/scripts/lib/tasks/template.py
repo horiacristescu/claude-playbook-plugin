@@ -402,7 +402,8 @@ Then **ask the user** what they want to work on. Don't autonomously pick a task.
 ```bash
 tasks work <number>              # activate task, hook starts tracking
 tasks work done                  # deactivate when finished
-tasks new <type> <name>          # create task — does NOT activate
+tasks new <type> <name> [intent] # create task — intent fills ## Intent
+tasks new --stub <type> <name> [intent] # stub — expands on tasks work
 tasks plan-review <number>       # blind plan review by independent agent
 tasks impl-review <number>       # blind implementation review by independent agent
 tasks list [--pending]           # task overview
@@ -451,13 +452,24 @@ def cli_reference() -> str:
     """CLI quick reference shown at bootstrap."""
     return """\
 Tasks CLI:
-  tasks work <N>           activate task (start here)
-  tasks work done          mark done + deactivate
-  tasks new <type> <name>  create task (doesn't activate)
-  tasks plan-review <N>    blind plan review
-  tasks impl-review <N>   blind implementation review
-  tasks list [--pending]   show tasks
-  tasks status             current gate position"""
+  Workflow:
+    tasks work <N>             activate task
+    tasks work done            deactivate
+    tasks freehand             user-driven mode (no gate pressure)
+  Create:
+    tasks new <type> <name> [intent]   create task (intent fills ## Intent)
+    tasks new --stub <type> <name> [intent]   stub (expands on work)
+  Review:
+    tasks plan-review <N>      blind plan review
+    tasks impl-review <N>      blind impl review
+    tasks panel-review <N>     multi-model judge panel
+  Analysis:
+    tasks retro [--since N]    project retrospective
+    tasks context <N>          extract chat messages for a task
+    tasks doctor               harness health check
+  Info:
+    tasks list [--pending]     show tasks
+    tasks status               current gate position"""
 
 
 # ---------------------------------------------------------------------------
@@ -471,21 +483,29 @@ def usage_text() -> str:
 Usage: tasks <command> [args]
 
 Commands:
-  init                Create CLAUDE.md for this project
-  bootstrap           Load mind map + skills + pending tasks
   work <number>       Set active task (e.g. tasks work 058)
-  new <type> <name>   Create task with playbook template
+  work done           Deactivate current task
+  freehand            User-driven mode (no gate pressure)
+  new <type> <name> [intent]   Create task (intent pre-fills ## Intent)
+  new --stub <type> <name> [intent]   Create stub (expands on work)
   list [--pending]    List all tasks with status
   status              Show head position for active tasks
-  plan-review <number>   Run blind plan review on a task
-  impl-review <number>   Run blind implementation review on a task
-  doctor              Run diagnostic checks on harness health
+  plan-review <N>     Run blind plan review
+  impl-review <N>     Run blind implementation review
+  panel-review <N>    Multi-model judge panel
+  retro [--since N]   Project retrospective
+  context <N>         Extract chat messages for a task
+  doctor              Harness health check
+  bootstrap           Load mind map + skills + pending tasks
+  init                Create CLAUDE.md for this project
 
 Task types: {types}
 
 Examples:
   tasks work 058
   tasks new feature add-auth
+  tasks new build my-task Build extraction layer for retro command
+  tasks new --stub research token-bug Investigate auth token refresh
   tasks plan-review 001
   tasks list --pending"""
 
@@ -496,6 +516,21 @@ def sticker_quick() -> str:
     return """\
 > **Gate discipline:** One gate \u2192 do work \u2192 check box \u2192 next gate.
 > Never batch. Never backfill. The document IS the execution trace."""
+
+
+def render_stub_template(num: int, title: str, intent_text: str = "",
+                         task_type: str | None = None) -> str:
+    """Minimal stub for GTD capture. No gates, expands on `tasks work <N>`."""
+    type_tag = task_type or "feature"
+    parts = [
+        header(num, title),
+        f"<!-- stub:{type_tag} -->",
+        status(),
+        f"## Intent\n{intent_text}" if intent_text else "## Intent\n(fill in before expanding)",
+        "## Why\n(fill in before expanding)",
+        "## References\n(optional)",
+    ]
+    return "\n\n".join(parts) + "\n"
 
 
 def render_quick_template(num: int, title: str) -> str:
