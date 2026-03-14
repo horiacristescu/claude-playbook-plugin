@@ -7,31 +7,69 @@
 
 set -e
 
-# Rotating micro-reflection nudges — one shown per tool call, indexed by gate_count.
-# Taxonomy: direction, effort, scope, progress, quality, awareness, plan integrity.
-# Ordered for maximum contrast — adjacent nudges from different categories.
-# Categories: D=direction, E=effort, S=scope, P=progress, Q=quality, A=awareness, R=replan, T=testing
-NUDGES=(
-    "Still solving the stated problem?"               # D
-    "Could this be simpler?"                           # E
-    "Any new gates I should add for what I just discovered?"  # R
-    "Would a reviewer accept this?"                    # Q
-    "Making progress or going in circles?"             # P
-    "Is this in scope or drifting?"                    # S
-    "Have you verified, or are you assuming?"           # T
-    "What's the risk I'm not seeing?"                  # A
-    "Does the plan still match what I'm finding?"      # R
-    "Right level of effort for this gate?"             # E
-    "What did the user actually ask for?"              # D
-    "How would you test this?"                         # T
-    "What's different from 3 tool calls ago?"          # P
-    "Should this gate be split or reworded?"           # R
-    "Would this survive a 'why did you do this?' question?"  # S
-    "If I were wrong, how would I know?"               # A
-    "Am I polishing or progressing?"                   # E
-    "Any assumptions I haven't checked?"               # Q
-    "Do I need to replan, or push through?"            # R
+# Tool-type-aware micro-reflection nudges — 5 classes, each naming a specific failure mode.
+# Call 1 on a new gate = silent. Call 2+ = class-specific nudge. Operate = always silent.
+NUDGES_ORIENT=(
+    "What am I looking for?"
+    "Do I already know enough to act?"
+    "Does this connect to the gate?"
+    "Am I browsing or searching?"
+    "What will I do with this information?"
 )
+NUDGES_EXECUTE=(
+    "Is this the simplest change that works?"
+    "How will I verify this?"
+    "Does this serve the Intent or my own idea?"
+    "Did I just introduce a problem?"
+    "Would the user recognize this as what they asked for?"
+)
+NUDGES_TEST=(
+    "Did I read the output or skim it?"
+    "Did it pass for the right reason?"
+    "What would a failure here look like?"
+    "Am I testing what the Intent says, or what's easy to test?"
+    "Is this gate done?"
+)
+NUDGES_REFLECT=(
+    "Did I append an outcome or just check the box?"
+    "Does what I wrote match what I actually did?"
+    "Am I closing this because it's done or because I want to move on?"
+    "Would a reader understand what happened from this annotation?"
+    "Should I replan instead of pushing forward?"
+)
+
+# classify_tool TOOL_NAME INPUT_JSON
+# Returns: orient, execute, test, operate, or reflect
+classify_tool() {
+    local tool="$1" input="$2"
+    case "$tool" in
+        Edit|Write|NotebookEdit)
+            # Reflect: editing task.md in .agent/tasks/
+            local fpath
+            fpath=$(echo "$input" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
+            if echo "$fpath" | grep -q '\.agent/tasks/.*/task\.md'; then
+                echo "reflect"
+            else
+                echo "execute"
+            fi
+            ;;
+        Bash)
+            local cmd
+            cmd=$(echo "$input" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
+            if echo "$cmd" | grep -qE 'pytest|python.*-m\s+pytest|test_|grep\s+-c|assert'; then
+                echo "test"
+            else
+                echo "operate"
+            fi
+            ;;
+        Read|Grep|Glob|WebSearch|WebFetch|ToolSearch)
+            echo "orient"
+            ;;
+        *)
+            echo "operate"
+            ;;
+    esac
+}
 
 # Source shared lib (same directory)
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -229,10 +267,28 @@ fi
 if [ -n "$BARE_MSG" ]; then
     CONTEXT="${CONTEXT}${BARE_MSG}"
 fi
-# Rotating nudge — appended to "Done?" line so it's visible in truncated display
-if [ -n "$GATE_LINE" ] && [ "$IS_FREEHAND" != true ] && [ "${#NUDGES[@]}" -gt 0 ]; then
-    NUDGE_IDX=$(( (NEW_COUNT - 1) % ${#NUDGES[@]} ))
-    CONTEXT="${CONTEXT} — 💭 ${NUDGES[$NUDGE_IDX]}"
+# Tool-type-aware nudge — silent on first call, silent on operate, class-specific otherwise
+if [ -n "$GATE_LINE" ] && [ "$IS_FREEHAND" != true ] && [ "$NEW_COUNT" -gt 1 ]; then
+    TOOL_CLASS=$(classify_tool "$TOOL_NAME" "$INPUT")
+    case "$TOOL_CLASS" in
+        orient)
+            NUDGE_IDX=$(( (NEW_COUNT - 2) % ${#NUDGES_ORIENT[@]} ))
+            CONTEXT="${CONTEXT} — 💭 ${NUDGES_ORIENT[$NUDGE_IDX]}"
+            ;;
+        execute)
+            NUDGE_IDX=$(( (NEW_COUNT - 2) % ${#NUDGES_EXECUTE[@]} ))
+            CONTEXT="${CONTEXT} — 💭 ${NUDGES_EXECUTE[$NUDGE_IDX]}"
+            ;;
+        test)
+            NUDGE_IDX=$(( (NEW_COUNT - 2) % ${#NUDGES_TEST[@]} ))
+            CONTEXT="${CONTEXT} — 💭 ${NUDGES_TEST[$NUDGE_IDX]}"
+            ;;
+        reflect)
+            NUDGE_IDX=$(( (NEW_COUNT - 2) % ${#NUDGES_REFLECT[@]} ))
+            CONTEXT="${CONTEXT} — 💭 ${NUDGES_REFLECT[$NUDGE_IDX]}"
+            ;;
+        # operate: silent — no nudge
+    esac
 fi
 
 # Format as hook JSON
