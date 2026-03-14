@@ -161,6 +161,13 @@ fi
 # Migrate old format if needed (runs once, idempotent)
 migrate_if_needed "$LOCAL_LOG" "$COUNTER_FILE"
 
+# Dedup guard: skip if last entry has same timestamp and content
+LAST_TS=$(tail -10 "$LOCAL_LOG" 2>/dev/null | grep -o '\[[0-9-]* [0-9:]* UTC\]' | tail -1)
+LAST_MSG=$(tail -3 "$LOCAL_LOG" 2>/dev/null | grep -v '^$' | grep -v '^\*\*\[' | grep -v '^---' | tail -1)
+if [ "[$TIMESTAMP]" = "$LAST_TS" ] && [ "$USER_MESSAGE" = "$LAST_MSG" ]; then
+    exit 0
+fi
+
 # Get next message ID
 MSG_ID=$(get_next_id "$COUNTER_FILE")
 
