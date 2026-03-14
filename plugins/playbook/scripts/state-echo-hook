@@ -31,11 +31,11 @@ NUDGES_TEST=(
     "Is this gate done?"
 )
 NUDGES_REFLECT=(
-    "Did I append an outcome or just check the box?"
-    "Does what I wrote match what I actually did?"
-    "Am I closing this because it's done or because I want to move on?"
-    "Would a reader understand what happened from this annotation?"
-    "Should I replan instead of pushing forward?"
+    "If that was a bare checkmark, go back and append what happened."
+    "Re-read what you just wrote — does it match what you did?"
+    "Closing to move on? Or because it's actually done?"
+    "Would a new agent understand this gate from what you wrote?"
+    "If the next gate feels wrong, replan now — not after starting it."
 )
 
 # classify_tool TOOL_NAME INPUT_JSON
