@@ -101,6 +101,9 @@ EVAL_NUDGES="typed"
 if [ -n "$PLAYBOOK_EVAL_CONFIG" ] && [ -f "$PLAYBOOK_EVAL_CONFIG" ]; then
     EVAL_GATE_ECHO=$(python3 -c "import sys,json; print(json.loads(open('$PLAYBOOK_EVAL_CONFIG').read()).get('gate_echo','on'))" 2>/dev/null || echo "on")
     EVAL_NUDGES=$(python3 -c "import sys,json; print(json.loads(open('$PLAYBOOK_EVAL_CONFIG').read()).get('nudges','typed'))" 2>/dev/null || echo "typed")
+    echo "⚠ EVAL MODE: gate_echo=${EVAL_GATE_ECHO}, nudges=${EVAL_NUDGES}" >&2
+    # Write file-based marker for harness verification (stream-json doesn't capture hook output)
+    echo "gate_echo=${EVAL_GATE_ECHO},nudges=${EVAL_NUDGES}" > "$PROJECT_DIR/.agent/eval-marker" 2>/dev/null || true
 fi
 
 # Use per-session state file when session_id is known

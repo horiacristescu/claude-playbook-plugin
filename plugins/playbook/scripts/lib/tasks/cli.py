@@ -842,8 +842,14 @@ def main():
             ]
 
             # Wrap in seatbelt sandbox on macOS (write containment)
+            # Skip if already inside sandbox (nested sandbox-exec is not allowed)
             import platform
-            if platform.system() == "Darwin" and shutil.which("sandbox-exec"):
+            already_sandboxed = (
+                os.environ.get("PLAYBOOK_SANDBOXED") == "1"
+                or str(project_path).startswith("/tmp/eval-")
+                or str(project_path).startswith("/private/tmp/eval-")
+            )
+            if not already_sandboxed and platform.system() == "Darwin" and shutil.which("sandbox-exec"):
                 git_dir = subprocess.run(
                     ["git", "rev-parse", "--git-dir"],
                     cwd=str(project_path), capture_output=True, text=True,
@@ -1276,175 +1282,37 @@ def main():
             print("No tasks found in window.", file=sys.stderr)
             sys.exit(1)
 
-        # Build structural summary
-        report_lines = []
-        report_lines.append(f"# Retro: tasks {tasks[0]['number']:03d}–{tasks[-1]['number']:03d}")
-        report_lines.append(f"")
-        report_lines.append(f"**Window:** {len(tasks)} tasks, {len(chatlog)} chat messages, {len(mindmap)} mind map nodes")
-        report_lines.append(f"")
-
-        # Task summary table
-        report_lines.append("## Task Inventory")
-        report_lines.append("")
-        report_lines.append("| # | Title | Status | Gates | Bare | Parked | Type |")
-        report_lines.append("|---|-------|--------|-------|------|--------|------|")
-        total_gates = 0
-        total_checked = 0
-        total_bare = 0
-        total_parked = 0
-        for t in tasks:
-            total_gates += t["gate_count"]
-            total_checked += t["checked_count"]
-            total_bare += t["bare_checkmark_count"]
-            total_parked += len(t["parked_items"])
-            title_short = t["title"][:30]
-            report_lines.append(
-                f"| {t['number']:03d} | {title_short} | {t['status'][:7]} | "
-                f"{t['checked_count']}/{t['gate_count']} | {t['bare_checkmark_count']} | "
-                f"{len(t['parked_items'])} | {t['playbook_type']} |"
-            )
-        report_lines.append("")
-        report_lines.append(f"**Totals:** {total_checked}/{total_gates} gates checked, "
-                          f"{total_bare} bare checkmarks ({total_bare*100//max(total_checked,1)}%), "
-                          f"{total_parked} parked items")
-        report_lines.append("")
-
-        # --- Analysis passes ---
+        # Run structural analysis passes
         from tasks.retro import (
-            analyze_intent_health, analyze_steering,
-            analyze_garbage, analyze_mindmap,
+            analyze_intent_health, analyze_garbage,
+            generate_retro_task,
+        )
+        health = analyze_intent_health(tasks)
+        gc = analyze_garbage(tasks)
+
+        # Generate the retro task.md — a cognitive program
+        retro_content = generate_retro_task(
+            tasks=tasks, chatlog=chatlog, mindmap=mindmap,
+            health=health, gc=gc,
         )
 
-        # Pass 1: Intent health
-        health = analyze_intent_health(tasks)
-        report_lines.append("## Intent Health (ranked by hollowness)")
-        report_lines.append("")
-        report_lines.append("| # | Title | Hollowness | Intent | Bare% | Adaptation | Parked |")
-        report_lines.append("|---|-------|------------|--------|-------|------------|--------|")
-        for h in health:
-            intent_flag = "✓" if h["intent_present"] else "✗"
-            bare_pct = f"{h['bare_ratio']:.0%}"
-            adapt = f"{h['gate_adaptation']:+d}" if h["gate_adaptation"] != 0 else "="
-            report_lines.append(
-                f"| {h['number']:03d} | {h['title'][:25]} | {h['hollowness']:.2f} | "
-                f"{intent_flag} | {bare_pct} | {adapt} | {h['parked_count']} |"
-            )
-        report_lines.append("")
+        # Create as a new task
+        from tasks.core import _next_task_number, _slugify
+        tasks_dir_path = project_path / ".agent" / "tasks"
+        task_num = _next_task_number(tasks_dir_path)
+        first = tasks[0]["number"]
+        last = tasks[-1]["number"]
+        slug = f"retro-{first:03d}-{last:03d}"
+        folder_name = f"{task_num:03d}-{slug}"
+        task_dir = tasks_dir_path / folder_name
+        task_dir.mkdir(parents=True)
+        task_file = task_dir / "task.md"
+        task_file.write_text(retro_content, encoding="utf-8")
 
-        # Pass 2: Steering inventory
-        corrections = analyze_steering(chatlog)
-        report_lines.append("## Steering Inventory")
-        report_lines.append("")
-        if corrections:
-            report_lines.append(f"**{len(corrections)} corrections detected**")
-            report_lines.append("")
-            # Group by task
-            by_task: dict[int | None, list] = {}
-            for c in corrections:
-                by_task.setdefault(c["task"], []).append(c)
-            for task_num, corrs in sorted(by_task.items(), key=lambda x: len(x[1]), reverse=True):
-                label = f"T{task_num:03d}" if task_num else "unattributed"
-                report_lines.append(f"**{label}** ({len(corrs)} corrections):")
-                for c in corrs[:5]:  # show up to 5 per task
-                    text_preview = c["text"][:100].replace("\n", " ")
-                    report_lines.append(f"- [M{c['id']:03d}] {text_preview}")
-                if len(corrs) > 5:
-                    report_lines.append(f"- ... and {len(corrs) - 5} more")
-                report_lines.append("")
-            # Systemic check
-            heavy_steering = [tn for tn, cs in by_task.items() if len(cs) >= 3 and tn is not None]
-            if heavy_steering:
-                ids = ", ".join(f"T{tn:03d}" for tn in heavy_steering)
-                report_lines.append(f"**⚠ Heavy steering (3+ corrections):** {ids}")
-                report_lines.append("")
-        else:
-            report_lines.append("No steering corrections detected in window.")
-            report_lines.append("")
-
-        # Pass 3: Garbage collection
-        gc = analyze_garbage(tasks)
-        report_lines.append("## Garbage Collection")
-        report_lines.append("")
-
-        if gc["parked"]:
-            report_lines.append("### Parked Items")
-            report_lines.append("")
-            for p in gc["parked"]:
-                marker = "✓ pursued" if p["status"] == "pursued" else "⏳ still-waiting"
-                report_lines.append(f"- **T{p['task']:03d}** [{marker}]: {p['text'][:120]}")
-            report_lines.append("")
-
-        if gc["pending"]:
-            report_lines.append("### Pending Tasks")
-            report_lines.append("")
-            for p in gc["pending"]:
-                work_flag = "(has progress)" if p["has_work"] else "(not started)"
-                report_lines.append(f"- **T{p['number']:03d}** ({p['title']}): {p['gates']} gates {work_flag}")
-            report_lines.append("")
-
-        if gc["loose_ends"]:
-            report_lines.append("### Loose Ends")
-            report_lines.append("")
-            for le in gc["loose_ends"]:
-                if "unchecked" in le:
-                    report_lines.append(f"- **T{le['number']:03d}** ({le['title']}): done but {le['unchecked']} unchecked gates")
-                elif "issue" in le:
-                    report_lines.append(f"- **T{le['number']:03d}** ({le['title']}): {le['issue']}")
-            report_lines.append("")
-
-        if not gc["parked"] and not gc["pending"] and not gc["loose_ends"]:
-            report_lines.append("No garbage to collect.")
-            report_lines.append("")
-
-        # Pass 4: Mind map reconciliation
-        mm_proposals = analyze_mindmap(mindmap)
-        total_size = sum(n["size"] for n in mindmap)
-        report_lines.append("## Mind Map Reconciliation")
-        report_lines.append("")
-        report_lines.append(f"**{len(mindmap)} nodes, {total_size:,} bytes** (target: <10,000)")
-        report_lines.append("")
-        if mm_proposals:
-            report_lines.append("| Node | Size | Proposal | Reason |")
-            report_lines.append("|------|------|----------|--------|")
-            for p in mm_proposals:
-                preview = p["text_preview"][:40].replace("|", "\\|")
-                report_lines.append(f"| [{p['id']}] {preview} | {p['size']} | {p['proposal']} | {p['reason'][:60]} |")
-            report_lines.append("")
-        else:
-            report_lines.append("No proposals — mind map is within targets.")
-            report_lines.append("")
-
-        # Questions for user
-        report_lines.append("## Questions for User")
-        report_lines.append("")
-        questions = []
-        if gc["pending"]:
-            not_started = [p for p in gc["pending"] if not p["has_work"]]
-            if not_started:
-                ids = ", ".join(f"T{p['number']:03d}" for p in not_started)
-                questions.append(f"Pending tasks never started: {ids} — still relevant, or abandon?")
-        still_waiting = [p for p in gc["parked"] if p["status"] == "still-waiting"]
-        if still_waiting:
-            questions.append(f"{len(still_waiting)} parked item(s) never pursued — file as tasks or discard?")
-        if total_size > 10000:
-            questions.append(f"Mind map is {total_size:,} bytes ({total_size - 10000:,} over target) — run /mindmap-optimize?")
-        if not questions:
-            questions.append("No unresolved questions.")
-        for q in questions:
-            report_lines.append(f"- {q}")
-        report_lines.append("")
-
-        report = "\n".join(report_lines)
-
-        # Output to stdout
-        print(report)
-
-        # Save to file
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        retro_file = project_path / ".agent" / f"retro-{ts}.md"
-        retro_file.write_text(report, encoding="utf-8")
-        print(f"\nSaved: {retro_file.relative_to(project_path)}", file=sys.stderr)
+        print(f"Created: {task_file.relative_to(project_path)}")
+        print(f"Retro task T{task_num:03d} — {len(tasks)} tasks in window, "
+              f"{len(chatlog)} chat messages, {len(mindmap)} mind map nodes")
+        print(f"Next: tasks work {task_num}")
 
     elif cmd == "status":
         project_path = find_project_root()
@@ -1851,6 +1719,27 @@ def main():
         elif drifted_main_ahead or main_only:
             fixable = len(drifted_main_ahead) + len(main_only)
             print(f"\n{fixable} node(s) can be auto-synced main→overflow. Run: tasks mindmap-sync --fix")
+
+    elif cmd == "log":
+        import re
+        project_path = find_project_root()
+        chat_log = project_path / ".agent" / "chat_log.md"
+        if not chat_log.exists():
+            print("Error: .agent/chat_log.md not found", file=sys.stderr)
+            sys.exit(1)
+        text = chat_log.read_text(encoding="utf-8")
+        blocks = text.split("\n---\n")
+        for block in blocks:
+            m = re.match(
+                r'\*\*(\[M\d+\])\*\* \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}):\d{2} UTC\] `(\w+)`\s*\n+(.*)',
+                block.strip(), re.DOTALL
+            )
+            if m:
+                mid, ts, role, body = m.groups()
+                body = body.strip().replace("\n", " ")
+                if len(body) > 500:
+                    body = body[:497] + "..."
+                print(f"{mid} {ts} {role:<6} {body}")
 
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)
