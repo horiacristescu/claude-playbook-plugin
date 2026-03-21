@@ -121,7 +121,53 @@ if [ -f "$PROJECT_DIR/.claude/bin/sandbox" ]; then
     CREATED+=(".claude/bin/sandbox")
 fi
 
-# --- (e) Summary ---
+# --- (e) bash history logging ---
+# BEGIN:bash-log
+SHELL_NAME="$(basename "$SHELL" 2>/dev/null)"
+if [ "$SHELL_NAME" = "zsh" ]; then
+    BASH_LOG_FILE="bash-log.zsh"
+    RC_FILE="$HOME/.zshenv"
+    SOURCE_LINE='[ -f ~/.claude/bash-log.zsh ] && source ~/.claude/bash-log.zsh'
+else
+    BASH_LOG_FILE="bash-log.sh"
+    # ~/.bashrc is interactive-only; CC runs non-interactive bash.
+    # BASH_ENV is sourced by bash for every non-interactive shell — the right hook.
+    # Prefer ~/.bash_profile (login shell sets env for all children); fall back to ~/.profile.
+    if [ -f "$HOME/.bash_profile" ] || [ ! -f "$HOME/.profile" ]; then
+        RC_FILE="$HOME/.bash_profile"
+    else
+        RC_FILE="$HOME/.profile"
+    fi
+    SOURCE_LINE='export BASH_ENV=~/.claude/bash-log.sh'
+fi
+
+BASH_LOG_SRC="$SCRIPT_DIR/$BASH_LOG_FILE"
+BASH_LOG_DEST="$HOME/.claude/$BASH_LOG_FILE"
+
+if [ -f "$BASH_LOG_SRC" ]; then
+    mkdir -p "$HOME/.claude"
+    if [ ! -f "$BASH_LOG_DEST" ]; then
+        cp "$BASH_LOG_SRC" "$BASH_LOG_DEST"
+        CREATED+=("~/.claude/$BASH_LOG_FILE")
+    elif diff -q "$BASH_LOG_SRC" "$BASH_LOG_DEST" > /dev/null 2>&1; then
+        SKIPPED+=("~/.claude/$BASH_LOG_FILE (unchanged)")
+    else
+        cp "$BASH_LOG_SRC" "$BASH_LOG_DEST"
+        CREATED+=("~/.claude/$BASH_LOG_FILE (updated)")
+    fi
+
+    if grep -qF 'claude/bash-log' "$RC_FILE" 2>/dev/null; then
+        SKIPPED+=("$RC_FILE (source line exists)")
+    else
+        { echo ""; echo "# claude-playbook: command logging"; echo "$SOURCE_LINE"; } >> "$RC_FILE"
+        CREATED+=("$RC_FILE (source line added)")
+    fi
+else
+    SKIPPED+=("bash-log (not bundled in plugin scripts — skipping)")
+fi
+# END:bash-log
+
+# --- (f) Summary ---
 echo "playbook init: $PROJECT_NAME"
 echo ""
 if [ ${#CREATED[@]} -gt 0 ]; then
