@@ -372,7 +372,7 @@ def generate_retro_task(
     lines.append("> Read the user's messages in the window. What were they trying to do?")
     lines.append("> Where did they struggle? What got corrected? What patterns emerge?")
     lines.append("")
-    lines.append("- [ ] Read chat_log.md messages for this window. Summarize: what was the user's arc? What themes dominated? What frustrations surfaced?")
+    lines.append("- [ ] Read chat_log.md messages for this window (use `.claude/bin/tasks log` for a compact one-line-per-message view, or filter by message IDs listed above). Summarize: what was the user's arc? What themes dominated? What frustrations surfaced?")
     lines.append("- [ ] Identify steering moments — where did the user correct the agent? What was the nature of each correction (misframed intent / over-engineering / wrong abstraction / missing context / process friction)?")
     lines.append("- [ ] What inefficiencies show up? How many messages did simple things take? Where did the conversation loop?")
     lines.append("")

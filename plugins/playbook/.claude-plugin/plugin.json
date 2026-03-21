@@ -1,7 +1,7 @@
 {
   "name": "playbook",
   "description": "Workflow enforcement hooks, skills, and task management for Claude Code",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "author": {
     "name": "Horia Cristescu"
   }
