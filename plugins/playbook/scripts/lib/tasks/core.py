@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 
 # Task type → pattern name in playbook skill
 PLAYBOOKS = {

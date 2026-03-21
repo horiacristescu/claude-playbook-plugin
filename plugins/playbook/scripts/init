@@ -162,6 +162,34 @@ if [ -f "$BASH_LOG_SRC" ]; then
         { echo ""; echo "# claude-playbook: command logging"; echo "$SOURCE_LINE"; } >> "$RC_FILE"
         CREATED+=("$RC_FILE (source line added)")
     fi
+
+    # Inject BASH_ENV into ~/.claude/settings.json so CC passes it to every bash shell it spawns.
+    # This is the reliable path — CC reads settings.json env key and injects vars before tool calls.
+    CC_SETTINGS="$HOME/.claude/settings.json"
+    BASH_ENV_RESULT=$(python3 -c "
+import json, os, tempfile
+path = '$CC_SETTINGS'
+# Always bash-log.sh — CC's Bash tool is /bin/bash regardless of user's login shell
+dest = os.path.expanduser('~/.claude/bash-log.sh')
+try:
+    data = json.loads(open(path).read()) if os.path.exists(path) else {}
+    env = data.setdefault('env', {})
+    if env.get('BASH_ENV') == dest:
+        print('SKIPPED')
+    else:
+        env['BASH_ENV'] = dest
+        tmp = path + '.tmp'
+        open(tmp, 'w').write(json.dumps(data, indent=2) + '\n')
+        os.replace(tmp, path)
+        print('CREATED')
+except Exception as e:
+    print('ERROR:' + str(e))
+" 2>&1)
+    case "$BASH_ENV_RESULT" in
+        CREATED)  CREATED+=("~/.claude/settings.json (BASH_ENV set)") ;;
+        SKIPPED)  SKIPPED+=("~/.claude/settings.json (BASH_ENV already set)") ;;
+        ERROR:*)  FAILED+=("~/.claude/settings.json: ${BASH_ENV_RESULT#ERROR:}") ;;
+    esac
 else
     SKIPPED+=("bash-log (not bundled in plugin scripts — skipping)")
 fi

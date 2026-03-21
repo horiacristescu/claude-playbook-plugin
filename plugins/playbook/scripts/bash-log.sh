@@ -1,11 +1,6 @@
 # claude-playbook: project-scoped command logging (bash)
-# Sourced from ~/.bashrc — logs non-interactive commands to .agent/bash_history
+# Sourced via BASH_ENV — logs commands in .agent/ projects to .agent/bash_history
 # Purpose: forensic post-mortem record ("what did the agent actually run?")
-
-# Only log non-interactive shells (agent invocations, not user terminals)
-if [[ $- == *i* ]]; then
-    return 0 2>/dev/null || true
-fi
 
 _cpb_log_cmd() {
     # Filter shell internals and CC infrastructure noise
