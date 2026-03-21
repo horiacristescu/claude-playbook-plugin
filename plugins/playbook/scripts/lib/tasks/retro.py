@@ -288,6 +288,168 @@ def extract_mindmap(path: Path) -> list[dict]:
     return nodes
 
 
+# --- Retro task generator ---
+
+def generate_retro_task(
+    tasks: list[dict],
+    chatlog: list[dict],
+    mindmap: list[dict],
+    health: list[dict],
+    gc: dict,
+) -> str:
+    """Generate a retro task.md — a cognitive program for the agent to execute.
+
+    The structural scan provides data. The gates are the analysis.
+    The agent works through them with full playbook enforcement.
+    """
+    first = tasks[0]["number"]
+    last = tasks[-1]["number"]
+    total_gates = sum(t["gate_count"] for t in tasks)
+    total_checked = sum(t["checked_count"] for t in tasks)
+    total_bare = sum(t["bare_checkmark_count"] for t in tasks)
+    total_parked = sum(len(t["parked_items"]) for t in tasks)
+    total_mm_size = sum(n["size"] for n in mindmap)
+    msg_count = len(chatlog)
+
+    lines = []
+
+    # Header
+    lines.append(f"# Retro {first:03d}–{last:03d}")
+    lines.append("")
+    lines.append("> **Intent is satisfied top-down:** user words → Intent → gates → code → tests.")
+    lines.append("> Does each level faithfully serve the one above?")
+    lines.append("> **Work is justified bottom-up:** tests → code → gates → Intent → user words.")
+    lines.append("> Does each level have evidence backing it from below?")
+    lines.append("")
+
+    # Status
+    lines.append("## Status")
+    lines.append("pending")
+    lines.append("")
+
+    # Structural summary
+    lines.append("## Structural Summary")
+    lines.append("")
+    lines.append(f"**Window:** {len(tasks)} tasks (T{first:03d}–T{last:03d}), "
+                 f"{msg_count} chat messages, {len(mindmap)} mind map nodes")
+    lines.append(f"**Gates:** {total_checked}/{total_gates} checked, "
+                 f"{total_bare} bare ({total_bare*100//max(total_checked,1)}%), "
+                 f"{total_parked} parked items")
+    lines.append(f"**Mind map:** {total_mm_size:,} bytes ({len(mindmap)} nodes, target <10,000)")
+    lines.append("")
+
+    # Task inventory table
+    lines.append("| # | Title | Status | Gates | Bare | Type |")
+    lines.append("|---|-------|--------|-------|------|------|")
+    for t in tasks:
+        title_short = t["title"][:30]
+        lines.append(
+            f"| {t['number']:03d} | {title_short} | {t['status'][:7]} | "
+            f"{t['checked_count']}/{t['gate_count']} | {t['bare_checkmark_count']} | "
+            f"{t['playbook_type']} |"
+        )
+    lines.append("")
+
+    # Pending / loose ends summary
+    if gc["pending"] or gc["loose_ends"]:
+        lines.append("**Loose ends:**")
+        for p in gc["pending"]:
+            work = "has progress" if p["has_work"] else "not started"
+            lines.append(f"- T{p['number']:03d} ({p['title']}): pending, {p['gates']} ({work})")
+        for le in gc["loose_ends"]:
+            if "unchecked" in le:
+                lines.append(f"- T{le['number']:03d} ({le['title']}): done but {le['unchecked']} unchecked")
+            elif "issue" in le:
+                lines.append(f"- T{le['number']:03d} ({le['title']}): {le['issue']}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+
+    # Phase 1: Chat log analysis
+    lines.append("## Phase 1: Chat Log Analysis")
+    lines.append("")
+    lines.append("> Read the user's messages in the window. What were they trying to do?")
+    lines.append("> Where did they struggle? What got corrected? What patterns emerge?")
+    lines.append("")
+    lines.append("- [ ] Read chat_log.md messages for this window. Summarize: what was the user's arc? What themes dominated? What frustrations surfaced?")
+    lines.append("- [ ] Identify steering moments — where did the user correct the agent? What was the nature of each correction (misframed intent / over-engineering / wrong abstraction / missing context / process friction)?")
+    lines.append("- [ ] What inefficiencies show up? How many messages did simple things take? Where did the conversation loop?")
+    lines.append("")
+
+    # Phase 2: Per-task review
+    lines.append("## Phase 2: Per-Task Review")
+    lines.append("")
+    lines.append("> For each task: Is intent **satisfied** (top-down)? Is work **justified** (bottom-up)?")
+    lines.append("> Open the task.md, read Intent, scan gates. Then check the code and tests:")
+    lines.append("> - Does the code exist? Do the files the gates reference actually contain what was claimed?")
+    lines.append("> - Do tests exist? Do they test what the Intent says, not just what was easy to test?")
+    lines.append("> - Trace all the way: user words → Intent → gates → code → tests (satisfied?) and back up (justified?)")
+    lines.append("")
+    for t in tasks:
+        intent_short = t["intent"][:100].replace("\n", " ") if t["intent"] else "(no intent)"
+        status = t["status"]
+        bare = t["bare_checkmark_count"]
+        flags = []
+        if bare > 0:
+            flags.append(f"{bare} bare")
+        if status == "pending" and t["checked_count"] == t["gate_count"] and t["gate_count"] > 0:
+            flags.append("done but not closed")
+        if t["playbook_type"].startswith("stub"):
+            flags.append("stub")
+        if len(t["parked_items"]) > 0:
+            flags.append(f"{len(t['parked_items'])} parked")
+        flag_str = f" [{', '.join(flags)}]" if flags else ""
+        lines.append(f"- [ ] **T{t['number']:03d}** {t['title']}{flag_str} — {intent_short}")
+    lines.append("")
+
+    # Phase 3: Cross-task chains
+    lines.append("## Phase 3: Cross-Task Chains")
+    lines.append("")
+    lines.append("> Pick facets that span multiple tasks. Follow each across the window.")
+    lines.append("> Did intent carry forward? Did investments pay off? What got abandoned?")
+    lines.append("")
+    lines.append("- [ ] Identify 3-5 facets (systems, themes, or components) that appear across multiple tasks in this window.")
+    lines.append("- [ ] For each facet: trace the chain. Did each task build on the previous? Did the work converge or scatter?")
+    lines.append("- [ ] Which investments paid off? Which were abandoned? Any patterns in what succeeds vs what stalls?")
+    lines.append("")
+
+    # Phase 4: Garbage collection
+    lines.append("## Phase 4: Garbage Collection")
+    lines.append("")
+    if gc["parked"]:
+        lines.append("### Parked items to triage:")
+        for p in gc["parked"]:
+            marker = "pursued" if p["status"] == "pursued" else "waiting"
+            lines.append(f"- [ ] T{p['task']:03d} [{marker}]: {p['text'][:120]}")
+        lines.append("")
+    lines.append("- [ ] Pending tasks: for each, decide — pursue, abandon, or merge into another task.")
+    lines.append("- [ ] Loose ends: done-but-unchecked, stubs never expanded — close or reopen?")
+    lines.append("")
+
+    # Phase 5: Mind map revision
+    lines.append("## Phase 5: Mind Map Revision")
+    lines.append("")
+    lines.append(f"> Current: {total_mm_size:,} bytes, {len(mindmap)} nodes. Target: <10,000 bytes.")
+    lines.append("> Keep only what reduces future cost — reasoning, decisions, relationships.")
+    lines.append("> Remove what's cheaply derivable from git log, grep, or reading code.")
+    lines.append("")
+    lines.append("- [ ] For each mind map node: does it carry information that would cost an agent significant time to rediscover? If not, compress or remove.")
+    lines.append("- [ ] Are there new decisions, patterns, or relationships from this window that should be added?")
+    lines.append("- [ ] Apply edits. Verify total <10KB.")
+    lines.append("")
+
+    # Phase 6: Findings
+    lines.append("## Findings")
+    lines.append("")
+    lines.append("- [ ] Synthesize: what worked well in this window? What needs to change?")
+    lines.append("- [ ] Concrete proposals: tasks to file, process changes, template improvements.")
+    lines.append("- [ ] What should the next retro investigate?")
+    lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
 # --- Analysis passes ---
 
 # Default gate counts per template type (approximate)
