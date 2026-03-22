@@ -119,7 +119,7 @@ def judge_section() -> str:
     return """\
 ## Plan Review
 - [ ] Run `.claude/bin/tasks plan-review <N>` — wait for it to finish (it edits this file). Re-read this file to see its findings below, then address valid concerns by revising Work Plan gates. **Justify lens:** does every work gate trace up to something in Intent/Design? Are there gates that justify nothing above them (scope creep)? Intent claims with no gate to satisfy them (gaps)?
-- [ ] *(Optional)* Run `.claude/bin/tasks panel-review <N>` for multi-model panel (writes to judge.md, not this file). Read judge.md with user, accept/reject findings, apply selected advice to Work Plan.
+- [ ] *(Optional)* Run `.claude/bin/tasks panel-review <N>` for multi-model panel (writes to judge.md, not this file). Add `--prompt "..."` to append extra steering (e.g. focus area, constraint). Read judge.md with user, accept/reject findings, apply selected advice to Work Plan.
 
 (plan review findings appear here)
 
@@ -142,7 +142,7 @@ def judge_impl_section() -> str:
     return """\
 ## Implementation Review
 - [ ] Run `.claude/bin/tasks impl-review <N>` — wait for it to finish (it edits this file). Re-read findings. **Satisfy lens:** does every Intent claim trace down through code to tests? Where does the chain break?
-- [ ] *(Optional)* Run `.claude/bin/tasks panel-review <N> --mode impl` for multi-model panel review.
+- [ ] *(Optional)* Run `.claude/bin/tasks panel-review <N> --mode impl` for multi-model panel review. Add `--prompt "..."` to append extra steering.
 
 (implementation review findings appear here)
 
@@ -468,7 +468,7 @@ Tasks CLI:
   Review:
     tasks plan-review <N>      blind plan review
     tasks impl-review <N>      blind impl review
-    tasks panel-review <N>     multi-model judge panel
+    tasks panel-review <N>     multi-model judge panel (--prompt "..." for any task, not just plan/impl)
   Analysis:
     tasks retro [--since N]    project retrospective
     tasks context <N>          extract chat messages for a task
@@ -498,7 +498,7 @@ Commands:
   status              Show head position for active tasks
   plan-review <N>     Run blind plan review
   impl-review <N>     Run blind implementation review
-  panel-review <N>    Multi-model judge panel
+  panel-review <N>    Multi-model judge panel (--prompt "..." appends extra steering to the review prompt)
   retro [--since N]   Project retrospective
   context <N>         Extract chat messages for a task
   doctor              Harness health check
@@ -513,6 +513,7 @@ Examples:
   tasks new build my-task Build extraction layer for retro command
   tasks new --stub research token-bug Investigate auth token refresh
   tasks plan-review 001
+  tasks panel-review 001 --prompt "pick the best story idea from ideas.txt"
   tasks list --pending"""
 
 
