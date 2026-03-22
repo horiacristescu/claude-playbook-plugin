@@ -546,11 +546,6 @@ def main():
         list_tasks(project_path, pending_only=pending_only)
 
     elif cmd == "panel-review":
-        if not cmd_args:
-            print("Error: 'panel-review' requires a task number", file=sys.stderr)
-            print("Usage: tasks panel-review <number> [--mode plan|impl] [--web-search] [--timeout SECONDS]", file=sys.stderr)
-            sys.exit(1)
-
         import shutil
         import subprocess
         from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeout
@@ -560,6 +555,8 @@ def main():
         web_search = False
         timeout_secs = 300  # 5 min default
         extra_prompt = ""
+        no_mind_map = False
+        bare = False
         remaining_args = []
         i = 0
         while i < len(cmd_args):
@@ -575,6 +572,12 @@ def main():
             elif cmd_args[i] == "--prompt" and i + 1 < len(cmd_args):
                 extra_prompt = cmd_args[i + 1]
                 i += 2
+            elif cmd_args[i] == "--no-mind-map":
+                no_mind_map = True
+                i += 1
+            elif cmd_args[i] == "--bare":
+                bare = True
+                i += 1
             else:
                 remaining_args.append(cmd_args[i])
                 i += 1
@@ -584,40 +587,71 @@ def main():
             sys.exit(1)
 
         task_num = remaining_args[0] if remaining_args else ""
-        if not task_num:
-            print("Error: 'panel-review' requires a task number", file=sys.stderr)
-            sys.exit(1)
         if task_num.isdigit():
             task_num = task_num.zfill(3)
 
-        project_path = find_project_root()
-        tasks_dir = project_path / ".agent" / "tasks"
-        matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
-        if not matches:
-            print(f"Task {task_num} not found", file=sys.stderr)
+        # Task number is optional; --prompt required when omitted
+        if not task_num and not extra_prompt:
+            print("Error: 'panel-review' requires a task number or --prompt", file=sys.stderr)
+            print("Usage: tasks panel-review [<number>] [--mode plan|impl] [--prompt \"...\"] [--no-mind-map] [--bare] [--web-search] [--timeout SECONDS]", file=sys.stderr)
             sys.exit(1)
 
-        task_file = matches[0]
-        task_path = str(task_file.relative_to(project_path))
+        project_path = find_project_root()
+
+        # Resolve task file if task number given
+        task_file = None
+        task_path = None
+        if task_num:
+            tasks_dir = project_path / ".agent" / "tasks"
+            matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
+            if not matches:
+                print(f"Task {task_num} not found", file=sys.stderr)
+                sys.exit(1)
+            task_file = matches[0]
+            task_path = str(task_file.relative_to(project_path))
 
         from tasks.template import panel_plan_review_prompt, panel_impl_review_prompt
 
         # Build context
         MAX_CONTEXT_CHARS = 100_000
         context_parts = []
-        mm_content = _load_mind_map(project_path)
-        if mm_content:
-            context_parts.append(f"=== MIND_MAP.md ===\n{mm_content}")
-        task_content = task_file.read_text(encoding="utf-8")
-        if len(task_content) > MAX_CONTEXT_CHARS // 2:
-            task_content = task_content[:MAX_CONTEXT_CHARS // 2] + "\n\n[... truncated ...]"
-        context_parts.append(f"=== {task_path} ===\n{task_content}")
+        if not bare:
+            if not no_mind_map:
+                mm_content = _load_mind_map(project_path)
+                if mm_content:
+                    context_parts.append(f"=== MIND_MAP.md ===\n{mm_content}")
+            if task_file:
+                task_content = task_file.read_text(encoding="utf-8")
+                if len(task_content) > MAX_CONTEXT_CHARS // 2:
+                    task_content = task_content[:MAX_CONTEXT_CHARS // 2] + "\n\n[... truncated ...]"
+                context_parts.append(f"=== {task_path} ===\n{task_content}")
+            else:
+                # Taskless: include recent chat log as project context
+                chat_log = project_path / ".agent" / "chat_log.md"
+                if chat_log.exists():
+                    chat_content = chat_log.read_text(encoding="utf-8")
+                    max_chat = MAX_CONTEXT_CHARS // 2
+                    if len(chat_content) > max_chat:
+                        chat_content = "[... truncated ...]\n\n" + chat_content[-max_chat:]
+                    context_parts.append(f"=== .agent/chat_log.md (recent) ===\n{chat_content}")
         system_context = "\n\n".join(context_parts)
         if len(system_context) > MAX_CONTEXT_CHARS:
             system_context = system_context[:MAX_CONTEXT_CHARS] + "\n\n[... truncated ...]"
 
-        prompt_fn = panel_plan_review_prompt if review_mode == "plan" else panel_impl_review_prompt
-        review_label = "plan review" if review_mode == "plan" else "impl review"
+        # Prompt strategy: bare/taskless → extra_prompt is full mission; with task → review prompt + optional steering
+        if task_file:
+            prompt_fn = panel_plan_review_prompt if review_mode == "plan" else panel_impl_review_prompt
+            review_label = "plan review" if review_mode == "plan" else "impl review"
+        else:
+            prompt_fn = None
+            review_label = "panel"
+
+        # Output path: task dir when task given, .agent/ otherwise
+        if task_file:
+            judge_md = task_file.parent / "judge.md"
+        else:
+            (project_path / ".agent").mkdir(exist_ok=True)
+            judge_md = project_path / ".agent" / "judge.md"
 
         # Discover available judges
         judges = []
@@ -639,14 +673,18 @@ def main():
             print("Error: no judge backends found (need claude, codex, or gemini on PATH)", file=sys.stderr)
             sys.exit(1)
 
-        print(f"Running panel {review_label} on {task_path} ({len(judges)} judges, {timeout_secs}s timeout)...", flush=True)
+        display_target = task_path or "(promptless)"
+        print(f"Running panel {review_label} on {display_target} ({len(judges)} judges, {timeout_secs}s timeout)...", flush=True)
 
         def run_judge(judge_spec):
             provider, variant, binary = judge_spec
             label = f"{provider}:{variant}" if variant else provider
-            prompt = prompt_fn(task_path, inline_context=(provider != "claude"))
-            if extra_prompt:
-                prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
+            if prompt_fn:
+                prompt = prompt_fn(task_path, inline_context=(provider != "claude"))
+                if extra_prompt:
+                    prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
+            else:
+                prompt = extra_prompt
 
             try:
                 if provider == "claude":
@@ -724,9 +762,9 @@ def main():
                 results[label] = output
                 print(f"  [{label}] done", flush=True)
 
-        # Write judge.md
-        judge_md = task_file.parent / "judge.md"
-        lines = [f"# Panel {review_label.title()} — {task_path}\n"]
+        # Write judge.md (path already set above based on task_file presence)
+        display_label = task_path or extra_prompt[:60]
+        lines = [f"# Panel {review_label.title()} — {display_label}\n"]
         lines.append(f"**Judges:** {len(results)} | **Web search:** {'yes' if web_search else 'no'} | **Timeout:** {timeout_secs}s\n\n")
         for label in sorted(results.keys()):
             lines.append("═" * 60)

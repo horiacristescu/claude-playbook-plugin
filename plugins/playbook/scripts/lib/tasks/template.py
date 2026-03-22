@@ -468,7 +468,7 @@ Tasks CLI:
   Review:
     tasks plan-review <N>      blind plan review
     tasks impl-review <N>      blind impl review
-    tasks panel-review <N>     multi-model judge panel (--prompt "..." for any task, not just plan/impl)
+    tasks panel-review [<N>]   multi-model judge panel; task optional — use --prompt alone for any question, --bare to strip all context
   Analysis:
     tasks retro [--since N]    project retrospective
     tasks context <N>          extract chat messages for a task
@@ -498,7 +498,10 @@ Commands:
   status              Show head position for active tasks
   plan-review <N>     Run blind plan review
   impl-review <N>     Run blind implementation review
-  panel-review <N>    Multi-model judge panel (--prompt "..." appends extra steering to the review prompt)
+  panel-review [<N>]  Multi-model judge panel
+                      --prompt "..."     add steering (appended to review prompt, or full mission if no task)
+                      --no-mind-map      strip mind map from context
+                      --bare             no context at all; --prompt is the entire prompt
   retro [--since N]   Project retrospective
   context <N>         Extract chat messages for a task
   doctor              Harness health check
@@ -513,7 +516,9 @@ Examples:
   tasks new build my-task Build extraction layer for retro command
   tasks new --stub research token-bug Investigate auth token refresh
   tasks plan-review 001
-  tasks panel-review 001 --prompt "pick the best story idea from ideas.txt"
+  tasks panel-review 001 --prompt "focus on the title-detection approach"
+  tasks panel-review --prompt "which of these two designs is simpler?" --no-mind-map
+  tasks panel-review --bare --prompt "read ideas.txt and pick the best story idea"
   tasks list --pending"""
 
 
