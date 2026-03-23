@@ -97,6 +97,7 @@ Step-test interleave. For features, refactoring, infra, docs, ports.
 **Ask before planning:**
 1. What does "done" look like — concretely, not vaguely? *(tasks with specific acceptance criteria executed cleanly; vague "done" led to scope creep)*
 2. After each step, what's the smallest test that proves it worked? *(deferred tests = quality drops — never let a step pass without paired verification)*
+   - **Property tests** (`hypothesis`): Consider for data transformations, parsers, and arithmetic — when you can state an invariant beyond "it doesn't crash." Generate inputs that match the function's actual domain, not the widest possible type. Otherwise, example tests are enough.
 3. What are you assuming about the existing code that you haven't verified? *(the plan is a debugging surface for invisible assumptions — wrong beliefs about architecture, APIs, or data flow cause cascading rework when they surface late)*
 4. Are you building or refactoring? Don't mix them in the same step. *(refactors that become features are the #1 scope explosion pattern)*
 5. Does this touch existing contracts other code depends on? *(judge catches wiring gaps when >2 files are touched — consider running it)*

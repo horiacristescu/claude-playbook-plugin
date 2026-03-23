@@ -88,6 +88,7 @@ def reflection_gates() -> str:
     return """\
 ### Reflection Gates
 - [ ] Wrote task-specific check questions (Bad: "is this working?" Good: "Does the output include the progress counter?" \u2014 the answer should require evidence, not just yes/no)
+- [ ] Test strategy: what are you testing and how? (point tests for specific behavior, property tests via `hypothesis` for invariants on transformations/parsers/arithmetic)
 - [ ] Before the riskiest step: what would make you stop and reconsider?
 - [ ] If judging quality before building: is the gap worth closing?"""
 
@@ -194,11 +195,12 @@ def plan_review_prompt(task_path: str, inline_context: bool = False) -> str:
         f"The MIND_MAP.md and task.md are {context_location}. "
         "Read the source files referenced in the plan to understand existing patterns. "
         f"{intent_check}"
-        "Then critique the plan through four lenses: "
+        "Then critique the plan through five lenses: "
         "(1) Intent alignment — will this approach actually fulfill the stated Intent? What's missing or underspecified? "
         "(2) Failure modes — what will go wrong that isn't addressed? Construct a concrete failing scenario. "
-        "(3) Simplify — is anything over-engineered? What can be dropped? "
-        "(4) Prove it — cite file:line evidence for claims about existing code. No hand-waving. "
+        "(3) Test coverage — does the test plan cover the failure modes above? For pure-function code, does it identify invariants (idempotency, bounds, round-trip) worth property-testing? "
+        "(4) Simplify — is anything over-engineered? What can be dropped? "
+        "(5) Prove it — cite file:line evidence for claims about existing code. No hand-waving. "
         "Be specific and adversarial — your job is to find problems, not approve. "
         "Max 5 findings, Critical and Important only — drop Minor. "
         "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
@@ -218,11 +220,12 @@ def impl_review_prompt(task_path: str, inline_context: bool = False) -> str:
         f"The MIND_MAP.md and task.md are {context_location}. "
         "Read the source files changed by this task (look at the Work Plan gates for paths). "
         f"{intent_check}"
-        "Review through four lenses: "
+        "Review through five lenses: "
         "(1) Simplify — what's unnecessary or over-engineered? What can be removed? "
         "(2) Self-critique — does the code actually fulfill the stated Intent? What would a skeptic say? "
         "(3) Bug scan — find actual bugs, edge cases, race conditions, or security issues. "
-        "(4) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
+        "(4) Test quality — do the tests verify Intent claims or just confirm the implementation? For pure-function code (parsers, formatters, transformations), are there untested invariants that property tests would catch? "
+        "(5) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
         "Be specific and adversarial — your job is to find problems, not approve. "
         "Max 5 findings, Critical and Important only — drop Minor. "
         "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
@@ -241,11 +244,12 @@ def panel_plan_review_prompt(task_path: str, inline_context: bool = False) -> st
         f"The MIND_MAP.md and task.md are {context_location}. "
         "Read the source files referenced in the plan to understand existing patterns. "
         f"{intent_check}"
-        "Then critique the plan through four lenses: "
+        "Then critique the plan through five lenses: "
         "(1) Intent alignment — will this approach actually fulfill the stated Intent? What's missing or underspecified? "
         "(2) Failure modes — what will go wrong that isn't addressed? Construct a concrete failing scenario. "
-        "(3) Simplify — is anything over-engineered? What can be dropped? "
-        "(4) Prove it — cite file:line evidence for claims about existing code. No hand-waving. "
+        "(3) Test coverage — does the test plan cover the failure modes above? For pure-function code, does it identify invariants (idempotency, bounds, round-trip) worth property-testing? "
+        "(4) Simplify — is anything over-engineered? What can be dropped? "
+        "(5) Prove it — cite file:line evidence for claims about existing code. No hand-waving. "
         "Be specific and adversarial — your job is to find problems, not approve. "
         "Max 5 findings, Critical and Important only — drop Minor. "
         "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
@@ -263,11 +267,12 @@ def panel_impl_review_prompt(task_path: str, inline_context: bool = False) -> st
         f"The MIND_MAP.md and task.md are {context_location}. "
         "Read the source files changed by this task (look at the Work Plan gates for paths). "
         f"{intent_check}"
-        "Review through four lenses: "
+        "Review through five lenses: "
         "(1) Simplify — what's unnecessary or over-engineered? What can be removed? "
         "(2) Self-critique — does the code actually fulfill the stated Intent? What would a skeptic say? "
         "(3) Bug scan — find actual bugs, edge cases, race conditions, or security issues. "
-        "(4) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
+        "(4) Test quality — do the tests verify Intent claims or just confirm the implementation? For pure-function code (parsers, formatters, transformations), are there untested invariants that property tests would catch? "
+        "(5) Prove it works — cite file:line evidence showing correctness, or construct a concrete scenario showing failure. "
         "Be specific and adversarial — your job is to find problems, not approve. "
         "Max 5 findings, Critical and Important only — drop Minor. "
         "Each finding: cite file:line, 1-2 sentences stating the problem, 1 sentence stating the fix. No elaboration. "
@@ -290,7 +295,8 @@ def design_phase_light() -> str:
 ### Fix Orientation
 - [ ] What exactly is broken or needs cleaning up?
 - [ ] What does "fixed" look like? (specific grep, test, or behavior)
-- [ ] What adjacent code could this break?"""
+- [ ] What adjacent code could this break?
+- [ ] Test strategy: point tests, or also property tests (`hypothesis`) if fixing a parser/formatter/transformation?"""
 
 
 def work_plan_fix() -> str:
@@ -313,7 +319,8 @@ def design_phase_investigate() -> str:
 ### Investigation Orientation
 - [ ] What's the question or hypothesis? State it before looking.
 - [ ] What evidence would change your mind?
-- [ ] When do you stop? (convergence criteria: N rounds with no new position, or specific answer found)"""
+- [ ] When do you stop? (convergence criteria: N rounds with no new position, or specific answer found)
+- [ ] Test strategy: if findings lead to code changes, point tests or also property tests (`hypothesis`) for invariants?"""
 
 
 def work_plan_investigate() -> str:
@@ -349,7 +356,8 @@ def design_phase_evaluate() -> str:
 - [ ] What are you evaluating, and against what criteria?
 - [ ] Define lenses (2-4 dimensions to assess consistently across all items)
 - [ ] How many items? If >5, plan a midpoint checkpoint.
-- [ ] Are you assessing or fixing? Keep them separate — assess first."""
+- [ ] Are you assessing or fixing? Keep them separate — assess first.
+- [ ] Test strategy: if evaluation leads to fixes, point tests or also property tests (`hypothesis`) for invariants?"""
 
 
 def work_plan_evaluate() -> str:
