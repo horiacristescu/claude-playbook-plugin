@@ -22,6 +22,8 @@ The plan changes as work progresses. The agent edits gates as it learns - steps 
 
 Claude, Cursor, and others will generate a checkboxable plan when you ask. But it's static - it doesn't edit itself as reality changes, it doesn't record what happened, and it disappears when the session ends. task.md grows.
 
+Because state lives in the file and not in memory, execution survives context compaction. Tasks that run to 500+ steps work reliably - useful when you need to apply a templated analysis or transformation across a large collection of files.
+
 <p align="center"><img src="assets/task_lifecycle.png" width="700" alt="Task lifecycle: 1. Task Creation (human + agent), 2. Plan Review (headless judge), 3. Build + Test (worker + chat steering), 4. Work Review (headless judge), then back to 1"></p>
 
 ## What comes with it
@@ -83,7 +85,7 @@ sandbox
 
 The sandbox uses macOS seatbelt or Linux bubblewrap. Your project directory is writable, `.git` is read-only, everything outside is blocked at the kernel level. The agent runs without permission prompts but can't escape the containment even if it tries. You still steer by chatting.
 
-Brief the agent, let it run, read the task.md when it's done.
+Tell the agent what you want built, what constraints matter, and what done looks like. You can steer at any point by chatting - but as the mind map fills in, the agent learns the project's quirks and needs less of it. If you want to follow along, task.md is easier to watch than the chat feed - you see from above, gates checking one by one, outcomes piling up. When it finishes, every decision is recorded and every test result is there.
 
 ## Two agents, one task
 
