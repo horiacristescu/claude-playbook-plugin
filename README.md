@@ -12,7 +12,7 @@ Agent:  works gate by gate, checking boxes, annotating findings
 You:    (20 minutes later) read the task.md, see exactly what happened and why
 ```
 
-## Everything is a task
+## task.md — plan and runtime
 
 Work happens in task.md files. The agent works through gates top to bottom, checking boxes and annotating as it goes. You can run a judge on the plan before any code is written — blind, no conversation access. A fresh session picks up the same file and continues from wherever the last one stopped.
 
@@ -26,15 +26,17 @@ Claude, Cursor, and others will generate a checkboxable plan when you ask. But i
 
 ## What comes with it
 
-**The mind map** (`MIND_MAP.md`) is a flat numbered list — architecture, decisions, what was tried and why. One node per line, cross-referenced, kept under 10KB. The agent reads it at session start instead of re-reading the codebase. Session thirty picks up from session one without re-learning anything.
+**The mind map** (`MIND_MAP.md`) is the project's memory — persistent across tasks and sessions. It captures both directions: intent and goals from the top down, architecture and structure from the bottom up. A new agent reads it at session start and is oriented in seconds, not minutes. Session thirty picks up from session one without re-learning anything.
 
 **The judge** reads the task plan before any code gets written. It sees the full codebase but not your conversation — no anchoring to whatever approach you already committed to in chat. On complex tasks, run a panel of several models; the hit rate on catching real problems goes up.
 
 **The chat log** records every message you send. A gate in the design phase checks the task against it — pulling in things you said conversationally but never wrote down. If your messages and the task don't agree, that's a bug in the plan, not just a documentation gap.
 
-**Hooks** enforce the structure at the system level. The agent can't edit code without an active task, can't skip gates, can't mark work done with gates still open. Warnings had a 2.7% correction rate across 612 observations, so we block instead.
+**Hooks** enforce the structure at the system level. The agent can't edit code without an active task, can't skip gates, can't mark work done with gates still open. Warnings don't stick, so we block instead.
 
-**Tests and the sandbox** cover different failure modes. Tests make the consequences of a wrong change visible immediately — the agent sees the failure and corrects course. The sandbox puts a hard boundary on blast radius. Your project directory is writable, `.git` is read-only, everything outside is blocked at the kernel level. No Docker. Tests catch logic errors; the sandbox catches the rest.
+**Tests** make the consequences of a wrong change visible immediately — the agent sees the failure and corrects course. The better the tests, the longer it can run unsupervised. Playbook leans heavily on this: the task.md template puts a test gate after each work gate, and we recommend expanding test coverage as part of every task.
+
+**The sandbox** lets you run the agent in full bypass-permissions mode — no prompts, no interruptions. The tradeoff is that blast radius is contained at the OS level: your project directory is writable, `.git` is read-only, and everything outside the project is blocked. You get the speed of unattended execution without the risk of it touching anything it shouldn't.
 
 <p align="center"><img src="assets/reactive_test_environment.png" width="600" alt="An AI agent in a go-kart racing inside concentric tire barriers labeled Unit Tests, Integration Tests, and E2E Tests, with a Safe Zone in the center"></p>
 
@@ -45,6 +47,10 @@ claude plugin marketplace add horiacristescu/claude-playbook-plugin
 ```
 
 Restart Claude Code, then in any project tell the agent `/playbook:init`. This creates `CLAUDE.md`, `MIND_MAP.md`, and `.claude/bin/tasks` — the task CLI.
+
+Then run `/playbook:mindmap` to build the initial mind map. The agent spends time mapping your code, tests, and docs — while you explain the goals and constraints that aren't in the code. The result is an agent that knows the internal geometry of your project before it touches anything. This is necessary, not optional: the mind map is the agent's memory and its starting point for every session that follows.
+
+If your test coverage is thin, do this before anything else: ask the agent to propose and write tests. Once you have both the mind map and a solid test suite, you have everything you need to run playbook safely on real work.
 
 To upgrade later: `/playbook:upgrade`.
 
@@ -95,6 +101,6 @@ Nodes cross-reference each other — **[5]** links to **[19]** which links back.
 
 ## When not to use it
 
-Quick questions, one-line fixes, shell commands, doc tweaks. The structure is for work that benefits from it - features, refactors, investigations, multi-file changes. Anything where you'd want to say "build this" rather than watch every keystroke.
+Not everything needs a task. Questions, shell commands, docs, git — just ask. The rule is simple: the moment the agent touches code files, declare a task first. The hooks enforce this.
 
-Refined across 700+ tasks on multiple codebases - macOS, Linux, and Windows.
+Works on macOS, Linux, and Windows.
