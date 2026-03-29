@@ -14,27 +14,27 @@ You:    (20 minutes later) read the task.md, see exactly what happened and why
 
 ## Everything is a task
 
-Work happens in task.md files. The agent works through gates top to bottom, checking boxes and annotating findings as it goes. You can run a judge on the plan before any code is written — blind, no conversation access. A fresh session picks up the same file and continues from wherever the last one stopped. Operations chain: create → judge → build → review → judge again. At any point you can check the task against your original messages to verify nothing drifted.
+Work happens in task.md files. The agent works through gates top to bottom, checking boxes and annotating as it goes. You can run a judge on the plan before any code is written — blind, no conversation access. A fresh session picks up the same file and continues from wherever the last one stopped.
 
-Each operation leaves a mark - judge findings, checked gates, annotated discoveries, flagged wrong turns. When the task is done it's the record of what happened and why.
+Each operation leaves a mark — a judge verdict, a checked gate with a note, a flagged wrong turn. When the task is done, it's the record of what happened and why.
 
-The plan changes as work progresses. The agent edits gates as it learns - steps get added or removed as reality demands. A reflection gate mid-task asks "am I solving the stated problem or a different one?" and the remaining plan gets revised from the answer. You steer by chatting at any point - "wrong approach," "skip that," "focus on X."
+The plan changes as work progresses. The agent edits gates as it learns — steps get added or removed as reality demands. A reflection gate mid-task asks "am I solving the stated problem or a different one?" and the remaining plan gets revised from the answer. You steer by chatting at any point — "wrong approach," "focus on X."
 
-Most agent tools treat tasks as inert data - a row in a list, something external acts on. These tasks run, get judged, carry their full history, and can be handed off between agents and sessions.
+Claude, Cursor, and others will generate a checkboxable plan when you ask. But it's static — it doesn't edit itself as reality changes, it doesn't record what happened, and it disappears when the session ends. task.md grows.
 
 <p align="center"><img src="assets/task_lifecycle.png" width="700" alt="Task lifecycle: 1. Task Creation (human + agent), 2. Plan Review (headless judge), 3. Build + Test (worker + chat steering), 4. Work Review (headless judge), then back to 1"></p>
 
 ## What comes with it
 
-**The mind map** (`MIND_MAP.md`) is a flat numbered list of project knowledge - architecture, decisions, what was tried and why. Kept under 10KB, one node per line, `[N]` cross-references. The agent reads it at session start instead of re-reading the codebase. Session thirty picks up from session one without re-learning anything.
+**The mind map** (`MIND_MAP.md`) is a flat numbered list — architecture, decisions, what was tried and why. One node per line, cross-referenced, kept under 10KB. The agent reads it at session start instead of re-reading the codebase. Session thirty picks up from session one without re-learning anything.
 
-**The judge** reads the task plan before any code gets written. It sees the full codebase but not your conversation - no pressure to agree with you, no anchoring to the approach you already committed to in chat. On complex tasks, run a panel of several models; the hit rate on catching real problems goes up.
+**The judge** reads the task plan before any code gets written. It sees the full codebase but not your conversation — no anchoring to whatever approach you already committed to in chat. On complex tasks, run a panel of several models; the hit rate on catching real problems goes up.
 
-**The chat log** records every message you send. A gate in the design phase checks the task against it - pulling in things you said conversationally but never wrote down. If your messages and the task don't agree, that's a bug in the plan, not just a documentation gap.
+**The chat log** records every message you send. A gate in the design phase checks the task against it — pulling in things you said conversationally but never wrote down. If your messages and the task don't agree, that's a bug in the plan, not just a documentation gap.
 
 **Hooks** enforce the structure at the system level. The agent can't edit code without an active task, can't skip gates, can't mark work done with gates still open. Warnings had a 2.7% correction rate across 612 observations, so we block instead.
 
-**Tests and the sandbox** cover different failure modes. Tests make the consequences of a wrong change visible immediately - the agent sees the failure and corrects course. The sandbox puts a hard boundary on blast radius: your project directory is writable, `.git` is read-only, everything outside the project is blocked at the kernel level. No Docker. Tests catch logic errors; the sandbox catches the rest.
+**Tests and the sandbox** cover different failure modes. Tests make the consequences of a wrong change visible immediately — the agent sees the failure and corrects course. The sandbox puts a hard boundary on blast radius. Your project directory is writable, `.git` is read-only, everything outside is blocked at the kernel level. No Docker. Tests catch logic errors; the sandbox catches the rest.
 
 <p align="center"><img src="assets/reactive_test_environment.png" width="600" alt="An AI agent in a go-kart racing inside concentric tire barriers labeled Unit Tests, Integration Tests, and E2E Tests, with a Safe Zone in the center"></p>
 
@@ -75,13 +75,13 @@ For hands-off execution, run in sandbox mode — `--dangerously-skip-permissions
 sandbox
 ```
 
-The sandbox uses macOS seatbelt or Linux bubblewrap to enforce write boundaries at the kernel level: your project directory is writable, `.git` is read-only, everything outside the project is blocked. The agent runs without permission prompts — no interruptions — but has no ability to escape the containment even if it tries. You still steer by chatting.
+The sandbox uses macOS seatbelt or Linux bubblewrap. Your project directory is writable, `.git` is read-only, everything outside is blocked at the kernel level. The agent runs without permission prompts but can't escape the containment even if it tries. You still steer by chatting.
 
 Brief the agent, let it run, read the task.md when it's done.
 
 ## Two agents, one task
 
-One setup that works well: the **orchestrator** runs outside the sandbox - writes plans, reviews results, commits. The **sandbox agent** runs in bypass mode - picks up the task.md and implements. The task.md is what passes between them. Different agents across different sessions can pick up the same task and keep going from wherever it stopped.
+One setup that works well: the **orchestrator** runs outside the sandbox — writes plans, reviews results, commits. The **sandbox agent** runs in bypass mode — picks up the task.md and builds. The task.md is the handoff. Different agents across different sessions can pick up the same task and keep going from wherever it stopped.
 
 ## The mind map in practice
 
@@ -91,7 +91,7 @@ One setup that works well: the **orchestrator** runs outside the sandbox - write
 >
 > **[19] Document-Driven Execution** - task.md is a computational model: checkboxes = state, sections = memory, templates = instruction set, agent = interpreter **[5]**...
 
-Nodes cross-reference each other — **[5]** links to **[19]** which links back. Architecture decisions, past failures, things that got tried — it's all there between sessions instead of having to be re-explained.
+Nodes cross-reference each other — **[5]** links to **[19]** which links back. What was decided, what failed, what got tried and why — it persists between sessions instead of being re-explained from scratch.
 
 ## When not to use it
 
