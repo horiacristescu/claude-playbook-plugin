@@ -14,7 +14,7 @@ You:    (20 minutes later) read the task.md, see exactly what happened and why
 
 ## Everything is a task
 
-Work happens in task.md files. Each task is a living document: you execute it (the agent works through gates top to bottom), pass it between agents (a fresh session picks it up and continues), run a judge on it (blind, no conversation access), chain operations on it (create → judge → build → review → judge again), and check it against your original messages.
+Work happens in task.md files. The agent works through gates top to bottom, checking boxes and annotating findings. A judge can review it blind at any point. A fresh session picks it up and continues from wherever the last one stopped.
 
 Each operation leaves a mark - judge findings, checked gates, annotated discoveries, flagged wrong turns. When the task is done it's the record of what happened and why.
 
