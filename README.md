@@ -1,6 +1,6 @@
 # Claude Playbook
 
-A Claude Code plugin for granting your agent real autonomy - the kind where you say "build this" and check back in 20 minutes.
+A Claude Code plugin for building software you can trust. The agent remembers your project across sessions, works in small reviewed tasks, and tests as it builds.
 
 ## What it looks like
 
