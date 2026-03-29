@@ -50,20 +50,23 @@ To upgrade later: `/playbook:upgrade`.
 
 ## Usage
 
-Tell the agent what you want. It creates a task, writes a plan, gets the plan reviewed, then works through the gates.
+Tell the agent what you want. It creates a task, writes a plan, gets the plan reviewed, then works through the gates — you chat, the agent runs the commands.
 
 ```
-tasks new feature user-auth        # create task
-tasks work 12                      # activate - hooks start enforcing
-# ... agent works through gates ...
-tasks work done                    # deactivate when finished
+You:    "Add rate limiting to the API endpoints"
+Agent:  tasks new feature rate-limiting
+Agent:  tasks plan-review 12
+Agent:  tasks work 12
+Agent:  [works gate by gate]
+Agent:  tasks work done
 ```
 
-For plan review before the agent touches any code:
+For plan review before the agent touches any code, ask for it explicitly:
 
 ```
-tasks plan-review 12               # single judge, blind
-tasks panel-review 12              # 7-model panel, higher discovery rate
+You:    "review the plan before coding"
+Agent:  tasks plan-review 12       # single judge, blind
+Agent:  tasks panel-review 12      # 7-model panel, higher discovery rate
 ```
 
 For hands-off execution, run in sandbox mode — `--dangerously-skip-permissions` inside OS-level write containment:
