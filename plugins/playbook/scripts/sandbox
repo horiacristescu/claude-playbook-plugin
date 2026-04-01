@@ -122,7 +122,7 @@ case "$(uname -s)" in
         # Redirect tool caches to /tmp — Claude Code's inner sandbox blocks ~/.cache
         export UV_CACHE_DIR="/tmp/uv-cache"
         # --no-hooks overrides sandbox-hooks.json; default uses project's sandbox hooks
-        if [ ${#SETTINGS_ARGS[@]} -eq 0 ]; then
+        if [ ${#SETTINGS_ARGS[@]} -eq 0 ] && [ -f ".claude/sandbox-hooks.json" ]; then
             SETTINGS_ARGS=(--settings .claude/sandbox-hooks.json)
         fi
         exec sandbox-exec -p "$PROFILE" claude \
