@@ -802,9 +802,9 @@ def main():
                 remaining_args.append(cmd_args[i])
                 i += 1
 
-        if backend not in ("claude", "codex"):
+        if backend not in ("claude", "codex", "gemini"):
             print(f"Error: unknown backend '{backend}'", file=sys.stderr)
-            print("Supported: claude (default), codex", file=sys.stderr)
+            print("Supported: claude (default), codex, gemini", file=sys.stderr)
             sys.exit(1)
 
         if not remaining_args:
