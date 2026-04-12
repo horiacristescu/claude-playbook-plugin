@@ -136,10 +136,14 @@ case "$(uname -s)" in
             WRITE_LOG_DIR="$HOME_DIR/.local/share/playbook"
             mkdir -p "$WRITE_LOG_DIR"
             # Build bwrap command with --rw paths
+            # Start with root read-only (deny-write by default, matching macOS seatbelt semantics)
+            # then explicitly bind writable paths
             BWRAP_CMD=(bwrap
-                --bind / /
+                --ro-bind / /
                 --proc /proc
                 --dev /dev
+                --bind "$PROJECT_DIR" "$PROJECT_DIR"
+                --bind /tmp /tmp
                 --ro-bind "$GIT_DIR" "$GIT_DIR"
                 --bind "$WRITE_LOG_DIR" "$WRITE_LOG_DIR"
             )
@@ -148,12 +152,14 @@ case "$(uname -s)" in
                 BWRAP_CMD+=(--bind "$rw" "$rw")
             done
             BWRAP_CMD+=(claude --dangerously-skip-permissions "${SETTINGS_ARGS[@]}" "${CLAUDE_ARGS[@]}")
-            echo "Launching claude with .git protection (bubblewrap)"
-            echo "  .git: $GIT_DIR (read-only)"
+            echo "Launching claude with write containment (bubblewrap)"
+            echo "  project: $PROJECT_DIR (read-write)"
+            echo "  .git:    $GIT_DIR (read-only)"
             for rw in "${RW_PATHS[@]}"; do
-                echo "  rw:   $rw"
+                echo "  rw:      $rw"
             done
-            [ "$NO_HOOKS" = true ] && echo "  hooks: disabled"
+            [ "$NO_HOOKS" = true ] && echo "  hooks:   disabled"
+            echo "  outside: read-only"
             echo ""
             exec "${BWRAP_CMD[@]}"
         else
