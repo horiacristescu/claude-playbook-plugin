@@ -143,7 +143,7 @@ write_log_append() {
     local slug
     slug=$(echo "$project_dir" | sed 's|^/||; s|/|-|g')
     local log_dir="$HOME/.local/share/playbook/$slug"
-    mkdir -p "$log_dir"
+    mkdir -p "$log_dir" 2>/dev/null || return 0
     local log_file="$log_dir/write_log"
     local ts
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -153,7 +153,7 @@ write_log_append() {
         printf '=== %s %s (%s bytes) ===\n' "$ts" "$file_path" "$size"
         cat "$file_path"
         printf '\n'
-    } >> "$log_file"
+    } >> "$log_file" 2>/dev/null || true
 }
 
 # create_wrapper PROJECT_DIR WRAPPER_NAME

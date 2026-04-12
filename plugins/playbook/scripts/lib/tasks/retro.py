@@ -79,6 +79,8 @@ def _parse_task(num: int, slug: str, content: str) -> dict:
         # Contains outcome markers = annotated
         if any(marker in text for marker in [" — ", " - ", "✓", "✗", "passing", "passed", "fixed"]):
             continue
+        if re.search(r':\s+\S|\.\s+\S', text):
+            continue
         bare_count += 1
 
     # Parked items
@@ -238,7 +240,7 @@ def build_task_windows(chatlog_path: Path, bash_history_path: Path | None = None
     if bash_history_path and bash_history_path.exists():
         content = bash_history_path.read_text(encoding="utf-8")
         work_pattern = re.compile(
-            r'\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\].*tasks\s+work\s+(\d+)'
+            r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\|\s+\w+\s+\|\s+.*tasks\s+work\s+(\d+)'
         )
         for m in work_pattern.finditer(content):
             ts = m.group(1).strip()
@@ -519,7 +521,7 @@ def analyze_steering(chatlog: list[dict]) -> list[dict]:
     """
     correction_markers = [
         "no,", "no ", "not that", "instead ", "don't ", "stop ",
-        "wrong", "I meant", "not what I", "that's not",
+        "wrong", "i meant", "not what i", "that's not",
     ]
     # "let's" and "actually" and "wait" are too broad — normal instructions
 

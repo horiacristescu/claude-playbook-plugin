@@ -1,6 +1,7 @@
 """Task management operations for .agent/tasks/ directories."""
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -27,6 +28,11 @@ def _slugify(name: str) -> str:
     slug = re.sub(r'[^a-zA-Z0-9-]', '', slug)
     slug = re.sub(r'-+', '-', slug)
     return slug.strip('-').lower()
+
+
+def _display_title(name: str) -> str:
+    """Render a task name for markdown headers."""
+    return name.replace("-", " ").replace("_", " ").title()
 
 
 def _next_task_number(tasks_dir: Path) -> int:
@@ -155,18 +161,18 @@ def create_task(project_path: Path, name: str, task_type: str | None = None,
         # Stub mode: minimal template with no gates
         from tasks.template import render_stub_template
         content = render_stub_template(
-            num=task_num, title=name.title(),
+            num=task_num, title=_display_title(name),
             intent_text=intent_text or "",
             task_type=task_type,
         )
     elif custom:
         content = custom.read_text(encoding="utf-8")
         content = content.replace("{{NNN}}", f"{task_num:03d}")
-        content = content.replace("{{TITLE}}", name.title())
+        content = content.replace("{{TITLE}}", _display_title(name))
     else:
         # Fall back to base Python template
         from tasks.template import render_template
-        content = render_template(num=task_num, title=name.title(), task_type=task_type)
+        content = render_template(num=task_num, title=_display_title(name), task_type=task_type)
 
         # Append playbook template if task_type specified
         if task_type:
@@ -276,7 +282,36 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
     Returns dict with keys: task_name, checked, next, task_file.
     On error, returns dict with 'error' key.
     """
-    task_file = _find_active_task(project_path, name_filter)
+    task_file = None
+
+    agent_dir = project_path / ".agent"
+    state_files = []
+    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
+    if session_id:
+        state_files.append(agent_dir / f"current_state.{session_id}")
+    state_files.append(agent_dir / "current_state")
+
+    for state_file in state_files:
+        if not state_file.exists():
+            continue
+        task_num = state_file.read_text(encoding="utf-8").strip()
+        if not task_num:
+            continue
+        matches = sorted((project_path / ".agent" / "tasks").glob(f"{task_num}-*/task.md"))
+        if not matches:
+            continue
+        candidate = matches[0]
+        if name_filter and name_filter not in candidate.parent.name:
+            continue
+        if _is_done(candidate):
+            continue
+        head = _extract_head_position(candidate)
+        if not head.startswith("("):
+            task_file = candidate
+            break
+
+    if task_file is None:
+        task_file = _find_active_task(project_path, name_filter)
     if not task_file:
         return {"error": "No active task with open gates"}
 

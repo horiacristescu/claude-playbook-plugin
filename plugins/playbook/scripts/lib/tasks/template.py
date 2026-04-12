@@ -406,7 +406,7 @@ def claude_md(title: str) -> str:
 ## Start Here
 
 ```bash
-tasks bootstrap          # loads mind map, skills, pending tasks
+.claude/bin/tasks bootstrap          # loads mind map, skills, pending tasks
 ```
 
 Then **ask the user** what they want to work on. Don't autonomously pick a task.
@@ -414,25 +414,25 @@ Then **ask the user** what they want to work on. Don't autonomously pick a task.
 ## CLI
 
 ```bash
-tasks work <number>              # activate task, hook starts tracking
-tasks work done                  # deactivate when finished
-tasks new <type> <name> [intent] # create task — intent fills ## Intent
-tasks new --stub <type> <name> [intent] # stub — expands on tasks work
-tasks plan-review <number>       # blind plan review by independent agent
-tasks impl-review <number>       # blind implementation review by independent agent
-tasks list [--pending]           # task overview
-tasks status                     # current gate position
-tasks bootstrap                  # orientation: mind map + skills + pending
+.claude/bin/tasks work <number>              # activate task, hook starts tracking
+.claude/bin/tasks work done                  # deactivate when finished
+.claude/bin/tasks new <type> <name> [intent] # create task — intent fills ## Intent
+.claude/bin/tasks new --stub <type> <name> [intent] # stub — expands on tasks work
+.claude/bin/tasks plan-review <number>       # blind plan review by independent agent
+.claude/bin/tasks impl-review <number>       # blind implementation review by independent agent
+.claude/bin/tasks list [--pending]           # task overview
+.claude/bin/tasks status                     # current gate position
+.claude/bin/tasks bootstrap                  # orientation: mind map + skills + pending
 ```
 
 ## Don't
 
-- Create task directories manually — always `tasks new`
-- Edit `.agent/current_state` — use `tasks work <N>` / `tasks work done`
-- Edit `## Status` in task.md directly — use `tasks work done`
+- Create task directories manually — always `.claude/bin/tasks new`
+- Edit `.agent/current_state` — use `.claude/bin/tasks work <N>` / `.claude/bin/tasks work done`
+- Edit `## Status` in task.md directly — use `.claude/bin/tasks work done`
 - Skip task.md checkboxes — they're your observable progress
-- Start coding without an active task — blocked by hook until `tasks work <N>`
-- Use EnterPlanMode or plan files — use `tasks new <type> <name>` instead, the task.md IS the plan
+- Start coding without an active task — blocked by hook until `.claude/bin/tasks work <N>`
+- Use EnterPlanMode or plan files — use `.claude/bin/tasks new <type> <name>` instead, the task.md IS the plan
 """
 
 

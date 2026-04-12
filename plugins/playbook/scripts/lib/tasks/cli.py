@@ -90,17 +90,30 @@ def _inject_chat_into_task(task_file: Path, messages: list[str]) -> None:
     if not messages:
         return
 
+    import re
+
+    def _utf8_safe(text: str) -> str:
+        """Replace non-UTF-8-survivable code points like lone surrogates."""
+        return text.encode("utf-8", errors="replace").decode("utf-8")
+
     content = task_file.read_text(encoding="utf-8")
 
     chat_block = "\n### Recent Chat (auto-captured at activation — review and remove unrelated)\n"
     for msg in messages:
-        chat_block += f"\n{msg}\n"
+        chat_block += f"\n{_utf8_safe(msg)}\n"
 
     # Insert after the first --- (end of References section, before Design Phase)
     first_sep = content.find("\n---\n")
     if first_sep >= 0:
-        content = content[:first_sep] + "\n" + chat_block + content[first_sep:]
-        task_file.write_text(content, encoding="utf-8")
+        references = content[:first_sep]
+        references = re.sub(
+            r'\n### Recent Chat \(auto-captured at activation — review and remove unrelated\)\n.*\Z',
+            "",
+            references,
+            flags=re.DOTALL,
+        )
+        content = references.rstrip() + "\n" + chat_block + content[first_sep:]
+        task_file.write_text(_utf8_safe(content), encoding="utf-8")
 
 
 def _load_mind_map(project_path: Path, max_chars: int = 25000) -> str | None:
@@ -122,33 +135,48 @@ def _load_mind_map(project_path: Path, max_chars: int = 25000) -> str | None:
     content = mind_map.read_text(encoding="utf-8")
     if len(content) <= max_chars:
         return content
-    # Keep 60% head, 40% tail — overview nodes are denser at the top
-    head_budget = int(max_chars * 0.6)
-    tail_budget = max_chars - head_budget
-    # Snap to line boundaries
+
+    max_omitted_digits = len(str(content.count("\n")))
+    marker_budget = len(f"\n\n[... {'9' * max_omitted_digits} lines omitted ...]\n")
+    available = max(max_chars - marker_budget, 0)
+    if available == 0:
+        return content[:max_chars]
+
+    # Keep 60% head, 40% tail — overview nodes are denser at the top.
+    head_budget = int(available * 0.6)
+    tail_budget = available - head_budget
+
+    # Snap inward to line boundaries so the head/tail stay within budget.
     head_end = content.rfind("\n", 0, head_budget)
     if head_end < 0:
         head_end = head_budget
     tail_start = content.find("\n", len(content) - tail_budget)
     if tail_start < 0:
         tail_start = len(content) - tail_budget
+    else:
+        tail_start += 1
     head = content[:head_end]
     tail = content[tail_start:]
     omitted = content[head_end:tail_start].count("\n")
-    return f"{head}\n\n[... {omitted} lines omitted ...]\n{tail}"
+    marker = f"\n\n[... {omitted} lines omitted ...]\n"
+    result = f"{head}{marker}{tail}"
+    if len(result) > max_chars:
+        overflow = len(result) - max_chars
+        if overflow < len(tail):
+            tail = tail[overflow:]
+        else:
+            head = head[:max(len(head) - (overflow - len(tail)), 0)]
+            tail = ""
+        result = f"{head}{marker}{tail}"
+    return result[:max_chars]
 
 
 def find_project_root() -> Path:
-    """Find project root by looking for .agent/tasks/, MIND_MAP.md, or CLAUDE.md."""
+    """Find project root by looking for the nearest .agent/tasks/ directory."""
     cwd = Path.cwd()
 
-    # Walk up from cwd — nearest match wins
     for p in [cwd, *cwd.parents]:
         if (p / ".agent" / "tasks").exists():
-            return p
-        if (p / "MIND_MAP.md").exists():
-            return p
-        if (p / "CLAUDE.md").exists():
             return p
 
     # Fall back to cwd (create_task will make .agent/tasks/)
@@ -780,7 +808,7 @@ def main():
         review_cmd = cmd
         if not cmd_args:
             print(f"Error: '{review_cmd}' requires a task number", file=sys.stderr)
-            print(f"Usage: tasks {review_cmd} <number> [--backend claude|codex]", file=sys.stderr)
+            print(f"Usage: tasks {review_cmd} <number> [--backend claude|codex|gemini]", file=sys.stderr)
             sys.exit(1)
 
         import shutil
@@ -929,7 +957,7 @@ def main():
                 text=True,
             )
 
-        else:  # codex
+        elif backend == "codex":
             codex_bin = shutil.which("codex")
             if not codex_bin:
                 print("Error: 'codex' not found on PATH", file=sys.stderr)
@@ -959,13 +987,43 @@ def main():
                 text=True,
             )
 
+        else:  # gemini
+            gemini_bin = shutil.which("gemini")
+            if not gemini_bin:
+                print("Error: 'gemini' not found on PATH", file=sys.stderr)
+                sys.exit(1)
+
+            prompt = prompt_fn(task_path, inline_context=True)
+            full_prompt = f"{system_context}\n\n---\n\n{prompt}"
+            if extra_prompt:
+                full_prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
+
+            cmd_list = [
+                gemini_bin, "-p", full_prompt,
+                "-m", "gemini-3.1-pro-preview",
+                "--approval-mode", "plan",
+                "-o", "text",
+            ]
+
+            print(f"Running {review_label} (gemini) on {task_path}...", flush=True)
+            result = subprocess.run(
+                cmd_list,
+                cwd=str(project_path),
+                capture_output=True,
+                text=True,
+            )
+
         if result.stdout:
             print(result.stdout, end="", flush=True)
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr, flush=True)
 
         # Save output — backend-specific log files
-        log_name = "judge.log" if backend == "claude" else "judge-codex.log"
+        log_name = {
+            "claude": "judge.log",
+            "codex": "judge-codex.log",
+            "gemini": "judge-gemini.log",
+        }.get(backend, "judge.log")
         judge_log = task_file.parent / log_name
         output = (result.stdout or "").strip()
         if result.returncode != 0 and not output:
@@ -1452,10 +1510,9 @@ def main():
         if not task_num:
             # Orchestrator mode: create + activate a new task
             print("No active task — creating freehand session...")
-            task_dir = create_task(project_path, "feature", "freehand-session")
-            task_file = task_dir / "task.md"
+            task_file = create_task(project_path, "freehand", task_type="feature")
             # Extract task number from dir name
-            task_num = task_dir.name.split("-")[0]
+            task_num = task_file.parent.name.split("-")[0]
             # Activate it
             legacy_state = agent_dir / "current_state"
             legacy_state.write_text(f"{task_num}\n", encoding="utf-8")
@@ -1483,6 +1540,8 @@ def main():
             f"- [ ] Freehand\n"
             f"- [ ] Freehand log — run `.claude/bin/tasks freehand log` to capture chat_log messages, "
             f"then retro-add checked gates for work done\n"
+            f"- [ ] Rewrite this freehand work into normal task gates inside this task so the final trace reads like ordinary tracked work\n"
+            f"- [ ] Rename this task folder and header to match what was actually done, then check this gate last\n"
         )
 
         # Find Work Plan section and insert before first unchecked gate there
@@ -1514,6 +1573,17 @@ def main():
         project_path = find_project_root()
         passed = 0
         failed = 0
+
+        def iter_hook_commands(node):
+            if isinstance(node, dict):
+                command = node.get("command")
+                if isinstance(command, str):
+                    yield command
+                for value in node.values():
+                    yield from iter_hook_commands(value)
+            elif isinstance(node, list):
+                for item in node:
+                    yield from iter_hook_commands(item)
 
         def check(name: str, ok: bool, detail: str = ""):
             nonlocal passed, failed
@@ -1579,15 +1649,11 @@ def main():
             import json as _json
             try:
                 settings = _json.loads(user_settings.read_text(encoding="utf-8"))
-                for hook_list in settings.get("hooks", {}).values():
-                    if isinstance(hook_list, list):
-                        for hook in hook_list:
-                            cmd = hook.get("command", "") if isinstance(hook, dict) else ""
-                            # Extract file paths from the command
-                            for token in cmd.split():
-                                p = Path(token)
-                                if p.suffix in (".sh", "") and len(p.parts) > 2 and not p.exists():
-                                    stale_hooks.append(str(p))
+                for cmd in iter_hook_commands(settings.get("hooks", {})):
+                    for token in cmd.split():
+                        p = Path(token)
+                        if p.suffix in (".sh", "") and len(p.parts) > 2 and not p.exists():
+                            stale_hooks.append(str(p))
             except (ValueError, KeyError):
                 pass
         check("hooks: no stale entries in ~/.claude/settings.json",
