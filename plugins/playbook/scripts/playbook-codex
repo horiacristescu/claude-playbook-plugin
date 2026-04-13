@@ -1,0 +1,40 @@
+#!/bin/bash
+# bin/playbook-codex — launch Codex with a unique per-session Playbook session ID.
+#
+# Usage: playbook-codex [codex-args...]
+#
+# Generates PLAYBOOK_SESSION_ID, provisions the session directory, then execs
+# codex so the agent inherits the env.  AGENTS.md in the project root tells
+# the Codex agent to run `tasks bootstrap` as its first action.
+#
+# Canonical user-facing entry point.  See src/provider/adapters/codex.py
+# launch_interactive() for the programmatic equivalent (assumes env pre-set).
+
+set -e
+
+# Find project root (directory containing .agent/tasks/)
+find_project_root() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -d "$dir/.agent/tasks" ]; then
+            echo "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    echo ""
+}
+
+PROJECT_ROOT="$(find_project_root)"
+
+# Generate unique session ID
+SESSION_ID="$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')"
+export PLAYBOOK_SESSION_ID="$SESSION_ID"
+export PLAYBOOK_PROJECT_ROOT="$PROJECT_ROOT"
+
+# Provision session directory so state files have a home
+if [ -n "$PROJECT_ROOT" ]; then
+    mkdir -p "$PROJECT_ROOT/.agent/sessions/$SESSION_ID"
+fi
+
+exec codex "$@"
