@@ -485,14 +485,18 @@ def main():
                     print(f"Now fill in {task_file.relative_to(project_path)} — design a good task.md.")
 
     elif cmd == "init":
-        # Parse --provider flag (additive on top of normal init)
+        # Parse provider-specific init flags (additive on top of normal init)
         provider = None
+        install_provider_hooks = False
         remaining_init_args = []
         i = 0
         while i < len(cmd_args):
             if cmd_args[i] == "--provider" and i + 1 < len(cmd_args):
                 provider = cmd_args[i + 1]
                 i += 2
+            elif cmd_args[i] == "--hooks":
+                install_provider_hooks = True
+                i += 1
             else:
                 remaining_init_args.append(cmd_args[i])
                 i += 1
@@ -564,6 +568,9 @@ def main():
             if provider not in _PROVIDER_MAP:
                 print(f"Error: unknown provider '{provider}'. Choose: codex, gemini", file=sys.stderr)
                 sys.exit(1)
+            if install_provider_hooks and provider != "codex":
+                print("Error: --hooks is currently supported only with --provider codex", file=sys.stderr)
+                sys.exit(1)
             import importlib
             adapter_cls_name = _PROVIDER_MAP[provider]
             mod = importlib.import_module(f"provider.adapters.{provider}")
@@ -571,8 +578,14 @@ def main():
             bootstrap_file = {"codex": "AGENTS.md", "gemini": "GEMINI.md"}[provider]
             bs_path = target / bootstrap_file
             already_existed = bs_path.exists()
-            adapter_cls("init", target).install_bootstrap(target)
+            adapter = adapter_cls("init", target)
+            adapter.install_bootstrap(target)
             print(f"  {bootstrap_file:<15}{'exists' if already_existed else 'created'}")
+            if install_provider_hooks:
+                adapter.install_hooks(target)
+        elif install_provider_hooks:
+            print("Error: --hooks requires --provider codex", file=sys.stderr)
+            sys.exit(1)
 
     elif cmd == "bootstrap":
         project_path = find_project_root()
