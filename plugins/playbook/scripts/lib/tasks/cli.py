@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -9,12 +10,11 @@ from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_pl
 
 
 def _state_file(project_path: Path) -> Path:
-    """Return per-session state file if PLAYBOOK_SESSION_ID is set, else legacy."""
-    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
-    agent_dir = project_path / ".agent"
-    if session_id:
-        return agent_dir / f"current_state.{session_id}"
-    return agent_dir / "current_state"
+    """Return per-session state file under .agent/sessions/<id>/current_state."""
+    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+    state_dir = project_path / ".agent" / "sessions" / session_id
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / "current_state"
 
 
 def _capture_recent_chat(project_path: Path, max_messages: int = 10,
@@ -218,16 +218,11 @@ def main():
         # Handle 'tasks work done' - deactivate current task and set Status in task.md
         if task_num == "done":
             agent_dir = project_path / ".agent"
-            legacy_state = agent_dir / "current_state"
-            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
-            session_state = agent_dir / f"current_state.{session_id}" if session_id else None
+            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+            session_state = agent_dir / "sessions" / session_id / "current_state"
 
-            # Find the active task from whichever state file exists
-            prev_task = None
-            for sf in [session_state, legacy_state]:
-                if sf and sf.exists():
-                    prev_task = sf.read_text(encoding="utf-8").strip()
-                    break
+            # Find the active task from session state file
+            prev_task = session_state.read_text(encoding="utf-8").strip() if session_state.exists() else None
 
             if prev_task:
                 # Set ## Status to done in task.md
@@ -241,15 +236,18 @@ def main():
                             lines[i + 1] = "done\n"
                             task_file.write_text("".join(lines), encoding="utf-8")
                             break
-                # Remove all state files that reference this task (legacy + all per-session).
-                # PLAYBOOK_SESSION_ID is not set when called from Bash tool (only in hook
-                # context), so we can't rely on session_state alone — scan everything.
-                for sf in [legacy_state] + list(agent_dir.glob("current_state.*")):
-                    try:
-                        if sf.exists() and sf.read_text(encoding="utf-8").strip() == prev_task:
-                            sf.unlink()
-                    except OSError:
-                        pass
+                # Remove session dirs that reference this task.
+                # PLAYBOOK_SESSION_ID is not set when called from Bash tool, so scan all sessions.
+                # Intentional partial delete: only sessions pointing at prev_task are removed;
+                # sessions for other tasks are left intact.
+                sessions_dir = agent_dir / "sessions"
+                if sessions_dir.exists():
+                    for sf in sessions_dir.glob("*/current_state"):
+                        try:
+                            if sf.read_text(encoding="utf-8").strip() == prev_task:
+                                shutil.rmtree(sf.parent, ignore_errors=True)
+                        except OSError:
+                            pass
                 print(f"Task {prev_task} done.")
             else:
                 print("No active task.")
@@ -290,10 +288,12 @@ def main():
         # Auto-close previous task if all gates are checked
         agent_dir = project_path / ".agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        legacy_state = agent_dir / "current_state"
+        session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+        session_dir = agent_dir / "sessions" / session_id
+        session_state = session_dir / "current_state"
         prev_task = None
-        if legacy_state.exists():
-            prev_task = legacy_state.read_text(encoding="utf-8").strip()
+        if session_state.exists():
+            prev_task = session_state.read_text(encoding="utf-8").strip()
         if prev_task and prev_task != task_num:
             from tasks.core import _extract_head_position, _extract_status
             prev_matches = list((project_path / ".agent" / "tasks").glob(f"{prev_task}-*/task.md"))
@@ -311,22 +311,20 @@ def main():
                             break
                     print(f"Auto-closed task {prev_task} (all gates checked).")
 
-        # Write task number to current_state
-        # Always write plain current_state (hooks fallback), plus per-session if set
-        legacy_state.write_text(f"{task_num}\n", encoding="utf-8")
-        session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
-        if session_id:
-            (agent_dir / f"current_state.{session_id}").write_text(f"{task_num}\n", encoding="utf-8")
+        # Write task number to per-session current_state
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_state.write_text(f"{task_num}\n", encoding="utf-8")
 
-        # Clean up stale per-session state files older than 24h
-        agent_dir = project_path / ".agent"
+        # Clean up stale session dirs older than 24h (remove entire dir, not just current_state)
+        sessions_dir = agent_dir / "sessions"
         cutoff = time.time() - 86400
-        for f in agent_dir.glob("current_state.*"):
-            try:
-                if f.stat().st_mtime < cutoff:
-                    f.unlink()
-            except OSError:
-                pass
+        if sessions_dir.exists():
+            for sf in sessions_dir.glob("*/current_state"):
+                try:
+                    if sf.stat().st_mtime < cutoff:
+                        shutil.rmtree(sf.parent, ignore_errors=True)
+                except OSError:
+                    pass
 
         # Expand stubs on activation
         task_content = task_file.read_text(encoding="utf-8")
@@ -487,6 +485,19 @@ def main():
                     print(f"Now fill in {task_file.relative_to(project_path)} — design a good task.md.")
 
     elif cmd == "init":
+        # Parse --provider flag (additive on top of normal init)
+        provider = None
+        remaining_init_args = []
+        i = 0
+        while i < len(cmd_args):
+            if cmd_args[i] == "--provider" and i + 1 < len(cmd_args):
+                provider = cmd_args[i + 1]
+                i += 2
+            else:
+                remaining_init_args.append(cmd_args[i])
+                i += 1
+        cmd_args = remaining_init_args
+
         # Target directory: argument or cwd
         target = Path(cmd_args[0]).resolve() if cmd_args else Path.cwd()
         if not target.exists():
@@ -547,6 +558,22 @@ def main():
                 print(f"    These are stale copies — canonical hooks live in scripts/ (resolved via plugin).")
                 print(f"    Fix: remove .claude/hooks/ directory")
 
+        # --provider: install provider-specific bootstrap file (additive)
+        if provider:
+            _PROVIDER_MAP = {"codex": "CodexAdapter", "gemini": "GeminiAdapter"}
+            if provider not in _PROVIDER_MAP:
+                print(f"Error: unknown provider '{provider}'. Choose: codex, gemini", file=sys.stderr)
+                sys.exit(1)
+            import importlib
+            adapter_cls_name = _PROVIDER_MAP[provider]
+            mod = importlib.import_module(f"provider.adapters.{provider}")
+            adapter_cls = getattr(mod, adapter_cls_name)
+            bootstrap_file = {"codex": "AGENTS.md", "gemini": "GEMINI.md"}[provider]
+            bs_path = target / bootstrap_file
+            already_existed = bs_path.exists()
+            adapter_cls("init", target).install_bootstrap(target)
+            print(f"  {bootstrap_file:<15}{'exists' if already_existed else 'created'}")
+
     elif cmd == "bootstrap":
         project_path = find_project_root()
 
@@ -568,13 +595,18 @@ def main():
         print("=== PENDING TASKS ===")
         list_tasks(project_path, pending_only=True)
 
+        # CLI reference — shown last so mind map + tasks aren't buried
+        from tasks.template import cli_reference
+        print()
+        print("=== CLI REFERENCE ===")
+        print(cli_reference())
+
     elif cmd in ("list", "ls"):
         project_path = find_project_root()
         pending_only = "--pending" in cmd_args
         list_tasks(project_path, pending_only=pending_only)
 
     elif cmd == "panel-review":
-        import shutil
         import subprocess
         from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeout
 
@@ -811,7 +843,6 @@ def main():
             print(f"Usage: tasks {review_cmd} <number> [--backend claude|codex|gemini]", file=sys.stderr)
             sys.exit(1)
 
-        import shutil
         import subprocess
 
         # Parse flags
@@ -1514,11 +1545,10 @@ def main():
             # Extract task number from dir name
             task_num = task_file.parent.name.split("-")[0]
             # Activate it
-            legacy_state = agent_dir / "current_state"
-            legacy_state.write_text(f"{task_num}\n", encoding="utf-8")
-            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
-            if session_id:
-                (agent_dir / f"current_state.{session_id}").write_text(f"{task_num}\n", encoding="utf-8")
+            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+            session_dir = agent_dir / "sessions" / session_id
+            session_dir.mkdir(parents=True, exist_ok=True)
+            (session_dir / "current_state").write_text(f"{task_num}\n", encoding="utf-8")
             print(f"Created and activated task {task_num}")
         else:
             # Work mode: insert into current task
@@ -1611,20 +1641,19 @@ def main():
         stdout_enc = getattr(sys.stdout, "encoding", "unknown") or "unknown"
         check("unicode: stdout encoding", "utf" in stdout_enc.lower(), stdout_enc)
 
-        # 3. Stale session files
+        # 3. Stale session dirs (current_state older than 24h — orphaned from crashed sessions)
         agent_dir = project_path / ".agent"
         stale = []
-        if agent_dir.exists():
-            active_state = agent_dir / "current_state"
-            active_task = active_state.read_text(encoding="utf-8").strip() if active_state.exists() else None
-            for sf in agent_dir.glob("current_state.*"):
+        sessions_dir = agent_dir / "sessions"
+        if sessions_dir.exists():
+            cutoff = time.time() - 86400
+            for sf in sessions_dir.glob("*/current_state"):
                 try:
-                    task_in_file = sf.read_text(encoding="utf-8").strip()
-                    if active_task and task_in_file != active_task:
-                        stale.append(sf.name)
+                    if sf.stat().st_mtime < cutoff:
+                        stale.append(sf.parent.name)
                 except OSError:
                     pass
-        check("session: no stale current_state.* files", len(stale) == 0,
+        check("session: no stale session dirs", len(stale) == 0,
               f"stale: {', '.join(stale)}" if stale else "clean")
 
         # 4. Hooks — check .claude/hooks/ (installed) or src/hooks/ (dev repo)

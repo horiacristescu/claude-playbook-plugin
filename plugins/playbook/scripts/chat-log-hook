@@ -184,4 +184,6 @@ SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.s
 if [ -z "$SESSION_ID" ]; then
     SESSION_ID="default"
 fi
-reset_counters "$PROJECT_DIR/.agent/.hook_counters.$SESSION_ID"
+SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+mkdir -p "$SESSION_DIR"
+reset_counters "$SESSION_DIR/counters"

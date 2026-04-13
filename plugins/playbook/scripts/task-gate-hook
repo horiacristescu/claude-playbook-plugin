@@ -49,8 +49,9 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
-# Default state file (legacy); overridden below if session_id available
-STATE_FILE="$PROJECT_DIR/.agent/current_state"
+# State file lives in per-session subdirectory; "default" used when no session_id
+SESSION_DIR="$PROJECT_DIR/.agent/sessions/default"
+STATE_FILE="$SESSION_DIR/current_state"
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 
 # CLAUDE.md keyword check — warn if task system exists but CLAUDE.md doesn't mention it
@@ -74,10 +75,12 @@ INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || echo "")
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
 
-# Use per-session state file when session_id is known
+# Use per-session subdirectory when session_id is known
 if [ -n "$SESSION_ID" ]; then
-    STATE_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
+    SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+    STATE_FILE="$SESSION_DIR/current_state"
 fi
+mkdir -p "$SESSION_DIR"
 
 # --- Eval mode: skip guards if pretool_guard=off (keep session injection in Guard 2) ---
 if [ -n "$PLAYBOOK_EVAL_CONFIG" ] && [ -f "$PLAYBOOK_EVAL_CONFIG" ]; then

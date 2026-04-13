@@ -285,11 +285,8 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
     task_file = None
 
     agent_dir = project_path / ".agent"
-    state_files = []
-    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "")
-    if session_id:
-        state_files.append(agent_dir / f"current_state.{session_id}")
-    state_files.append(agent_dir / "current_state")
+    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+    state_files = [agent_dir / "sessions" / session_id / "current_state"]
 
     for state_file in state_files:
         if not state_file.exists():

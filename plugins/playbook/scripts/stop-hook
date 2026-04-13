@@ -36,12 +36,9 @@ if [ -n "$PLAYBOOK_EVAL_CONFIG" ] && [ -f "$PLAYBOOK_EVAL_CONFIG" ]; then
     fi
 fi
 
-STATE_FILE="$PROJECT_DIR/.agent/current_state"
-
-# Use per-session state file when session_id is known
-if [ -n "$SESSION_ID" ]; then
-    STATE_FILE="$PROJECT_DIR/.agent/current_state.$SESSION_ID"
-fi
+# Per-session subdirectory; "default" fallback when no session_id
+SESSION_DIR="$PROJECT_DIR/.agent/sessions/${SESSION_ID:-default}"
+STATE_FILE="$SESSION_DIR/current_state"
 
 # No active task — allow
 if [ ! -f "$STATE_FILE" ]; then
@@ -69,8 +66,7 @@ fi
 
 # Counter-gated bypass: allow stop for conversational replies (low tool activity)
 # Missing counter file = assume work was done (block)
-COUNTER_SESSION="${SESSION_ID:-default}"
-COUNTER_FILE="$PROJECT_DIR/.agent/.hook_counters.$COUNTER_SESSION"
+COUNTER_FILE="$SESSION_DIR/counters"
 if [ -f "$COUNTER_FILE" ]; then
     WRITES=$(read_counter "$COUNTER_FILE" writes)
     TOOLS=$(read_counter "$COUNTER_FILE" tools)

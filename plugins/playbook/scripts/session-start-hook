@@ -4,7 +4,7 @@
 #
 # Uses CLAUDE_ENV_FILE to make the env var available in all subsequent
 # Bash commands for the session. This enables per-session task state:
-# each agent gets its own .agent/current_state.<session_id> file.
+# each agent gets its own .agent/sessions/<session_id>/ directory.
 #
 # Note: CLAUDE_ENV_FILE doesn't work in VSCode extension (as of Feb 2026).
 # The PreToolUse hook (task-gate-hook) injects the env var via updatedInput
@@ -35,11 +35,15 @@ if [ -n "$PROJECT_DIR" ]; then
     create_wrapper "$PROJECT_DIR" tasks
     create_wrapper "$PROJECT_DIR" sandbox
 
-    # GC: sweep stale per-session files from crashed/killed sessions (>24h old)
-    AGENT_DIR="$PROJECT_DIR/.agent"
-    if [ -d "$AGENT_DIR" ]; then
-        find "$AGENT_DIR" -maxdepth 1 -name '.hook_counters.*' -mtime +0 -delete 2>/dev/null || true
-        find "$AGENT_DIR" -maxdepth 1 -name 'current_state.*' -mtime +0 -delete 2>/dev/null || true
+    # Provision session directory for this session
+    SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+    mkdir -p "$SESSION_DIR"
+
+    # GC: sweep stale session dirs from crashed/killed sessions (current_state >24h old)
+    SESSIONS_DIR="$PROJECT_DIR/.agent/sessions"
+    if [ -d "$SESSIONS_DIR" ]; then
+        find "$SESSIONS_DIR" -maxdepth 2 -name 'current_state' -mtime +0 \
+            -exec dirname {} \; 2>/dev/null | xargs rm -rf 2>/dev/null || true
     fi
 fi
 

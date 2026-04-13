@@ -428,7 +428,7 @@ Then **ask the user** what they want to work on. Don't autonomously pick a task.
 ## Don't
 
 - Create task directories manually — always `.claude/bin/tasks new`
-- Edit `.agent/current_state` — use `.claude/bin/tasks work <N>` / `.claude/bin/tasks work done`
+- Edit `.agent/sessions/` state files directly — use `.claude/bin/tasks work <N>` / `.claude/bin/tasks work done`
 - Edit `## Status` in task.md directly — use `.claude/bin/tasks work done`
 - Skip task.md checkboxes — they're your observable progress
 - Start coding without an active task — blocked by hook until `.claude/bin/tasks work <N>`
@@ -484,6 +484,115 @@ Tasks CLI:
   Info:
     tasks list [--pending]     show tasks
     tasks status               current gate position"""
+
+
+def agents_md_template() -> str:
+    """AGENTS.md content for Codex projects.
+
+    Codex auto-loads AGENTS.md from the repo root (baked into its base
+    instructions).  This file teaches the agent the Playbook workflow.
+    Embed cli_reference() literally — current at install time.  To refresh
+    after a Playbook upgrade: delete AGENTS.md, then re-run
+    `tasks init --provider codex`.
+    """
+    return """\
+# Playbook Workflow
+
+This project uses the **Playbook task harness**.  Follow these rules on every
+session — they govern how you work, not what you build.
+
+## Start of Session
+
+Run this first, before anything else:
+
+    .claude/bin/tasks bootstrap
+
+It prints the project mind map, pending tasks, and the full CLI reference.
+Read it.  Then ask the user what to work on, or pick the highest-priority
+pending task.
+
+## Before Editing Code
+
+You **must** activate a task before touching any code file:
+
+    .claude/bin/tasks work <N>      # e.g. tasks work 042
+
+This sets the active task.  Without it, edits are blocked.
+
+## Working Through a Task
+
+- Read the task.md that `tasks work` prints.
+- Work **one gate at a time**: read the gate → do the work → check the box
+  (append your outcome on the same line) → move to the next gate.
+- Never skip gates.  Never batch-close multiple gates in one edit.
+- If you discover new work, add new gates to task.md immediately.
+
+## End of Task
+
+    .claude/bin/tasks work done
+
+This deactivates the task and marks it done.  Run it when all gates are
+checked — not before.
+
+## CLI Reference
+
+{cli_ref}
+
+## Do Not
+
+- Edit `.agent/sessions/` files directly — use `tasks work` / `tasks work done`.
+- Create `.agent/tasks/NNN-name/` directories manually — use `tasks new`.
+- Close multiple gates in a single edit.
+- Start coding without an active task.
+""".format(cli_ref=cli_reference())
+
+
+def gemini_md_template() -> str:
+    """GEMINI.md content for Gemini CLI projects.
+
+    Advisory only — Gemini hook model not yet verified.  Gemini may or may
+    not auto-load this file; treat as best-effort guidance.
+    """
+    return """\
+# Playbook Workflow (Advisory)
+
+This project uses the **Playbook task harness**.  Gemini hook enforcement is
+not yet verified; follow these rules as best practice.
+
+## Start of Session
+
+Run this first:
+
+    .claude/bin/tasks bootstrap
+
+It prints the project mind map, pending tasks, and the full CLI reference.
+
+## Before Editing Code
+
+Activate a task:
+
+    .claude/bin/tasks work <N>
+
+## Working Through a Task
+
+Work one gate at a time.  Check each gate box before moving to the next.
+Never skip.  Never batch.
+
+## End of Task
+
+    .claude/bin/tasks work done
+
+## CLI Reference
+
+{cli_ref}
+
+## Do Not
+
+- Edit `.agent/sessions/` files directly — use `tasks work` / `tasks work done`.
+- Create `.agent/tasks/NNN-name/` directories manually — use `tasks new`.
+- Close multiple gates in a single edit.
+- Start coding without an active task.
+""".format(cli_ref=cli_reference())
 
 
 # ---------------------------------------------------------------------------
