@@ -183,28 +183,45 @@ def find_project_root() -> Path:
     return cwd
 
 
-def _gc_dead_pid_sessions(project_path: Path) -> None:
-    """Remove session dirs for dead PID-named sessions.
+def _gc_dead_sessions(project_path: Path) -> None:
+    """Remove stale session dirs and legacy flat files.
 
-    Called at every tasks invocation. Cost: O(N sessions × 1 syscall).
-    Only cleans pid-{N} dirs — UUID sessions are handled by the 24h GC elsewhere.
+    Called at every tasks invocation. Cheap: O(N sessions × 1 stat).
+
+    Session dirs older than 24h (by current_state mtime) are removed.
+    Legacy flat files (.hook_counters.*, current_state*) in .agent/ root
+    are always removed — they're pre-migration artifacts.
     """
-    sessions_dir = project_path / ".agent" / "sessions"
+    agent_dir = project_path / ".agent"
+    sessions_dir = agent_dir / "sessions"
+
+    # Clean legacy flat files from pre-migration layout
+    for pattern in (".hook_counters.*", "current_state", "current_state.*"):
+        for f in agent_dir.glob(pattern):
+            if f.is_file():
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+
+    # Clean stale session dirs (current_state older than 24h)
     if not sessions_dir.exists():
         return
+    cutoff = time.time() - 86400
+    own_session = os.environ.get("PLAYBOOK_SESSION_ID", "")
     for session_dir in sessions_dir.iterdir():
-        if not session_dir.is_dir() or not session_dir.name.startswith("pid-"):
+        if not session_dir.is_dir():
             continue
-        try:
-            pid = int(session_dir.name[4:])
-        except ValueError:
+        # Never remove our own session
+        if own_session and session_dir.name == own_session:
             continue
+        state_file = session_dir / "current_state"
         try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            shutil.rmtree(session_dir, ignore_errors=True)
-        except PermissionError:
-            pass  # process exists, not ours to signal — keep
+            if state_file.exists() and state_file.stat().st_mtime >= cutoff:
+                continue  # fresh — keep
+        except OSError:
+            pass
+        shutil.rmtree(session_dir, ignore_errors=True)
 
 
 def print_usage():
@@ -225,7 +242,7 @@ def main():
         print_usage()
         return
 
-    _gc_dead_pid_sessions(find_project_root())
+    _gc_dead_sessions(find_project_root())
 
     cmd = args[0]
     cmd_args = args[1:]
@@ -341,16 +358,7 @@ def main():
         session_dir.mkdir(parents=True, exist_ok=True)
         session_state.write_text(f"{task_num}\n", encoding="utf-8")
 
-        # Clean up stale session dirs older than 24h (remove entire dir, not just current_state)
-        sessions_dir = agent_dir / "sessions"
-        cutoff = time.time() - 86400
-        if sessions_dir.exists():
-            for sf in sessions_dir.glob("*/current_state"):
-                try:
-                    if sf.stat().st_mtime < cutoff:
-                        shutil.rmtree(sf.parent, ignore_errors=True)
-                except OSError:
-                    pass
+        # Stale session GC handled by _gc_dead_sessions() at CLI entry point
 
         # Expand stubs on activation
         task_content = task_file.read_text(encoding="utf-8")
@@ -1578,11 +1586,33 @@ def main():
             task_num = None
 
         if not task_num:
-            # Orchestrator mode: create + activate a new task
+            # Orchestrator mode: create a minimal freehand task (no Design Phase)
             print("No active task — creating freehand session...")
-            task_file = create_task(project_path, "freehand", task_type="feature")
-            # Extract task number from dir name
-            task_num = task_file.parent.name.split("-")[0]
+            from tasks.core import _next_task_number, _slugify
+            tasks_dir = agent_dir / "tasks"
+            task_num_int = _next_task_number(tasks_dir)
+            task_num = f"{task_num_int:03d}"
+            slug = _slugify("freehand")
+            task_dir = tasks_dir / f"{task_num}-{slug}"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            task_file = task_dir / "task.md"
+            # Write minimal template — Freehand gate is first unchecked gate
+            from datetime import datetime, timezone
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            task_file.write_text(
+                f"# {task_num} - Freehand\n\n"
+                f"## Status\nin_progress\n\n"
+                f"## Intent\n(freehand session — intent determined during work)\n\n"
+                f"## Work Plan\n\n"
+                f"### Freehand\n"
+                f"<!-- freehand-start: {now_iso} -->\n"
+                f"- [ ] Freehand\n"
+                f"- [ ] Freehand log — run `.claude/bin/tasks freehand log` to capture chat_log messages, "
+                f"then retro-add checked gates for work done\n"
+                f"- [ ] Rewrite this freehand work into normal task gates inside this task so the final trace reads like ordinary tracked work\n"
+                f"- [ ] Rename this task folder and header to match what was actually done, then check this gate last\n",
+                encoding="utf-8",
+            )
             # Activate it
             session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
             session_dir = agent_dir / "sessions" / session_id
@@ -1590,7 +1620,7 @@ def main():
             (session_dir / "current_state").write_text(f"{task_num}\n", encoding="utf-8")
             print(f"Created and activated task {task_num}")
         else:
-            # Work mode: insert into current task
+            # Work mode: insert freehand block into current task
             tasks_dir = agent_dir / "tasks"
             matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
             if not matches:
@@ -1598,44 +1628,40 @@ def main():
                 sys.exit(1)
             task_file = matches[0]
 
-        # Insert Freehand block before first unchecked gate in Work Plan
-        from datetime import datetime, timezone
-        task_text = task_file.read_text(encoding="utf-8")
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            from datetime import datetime, timezone
+            task_text = task_file.read_text(encoding="utf-8")
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        freehand_block = (
-            f"\n### Freehand\n"
-            f"<!-- freehand-start: {now_iso} -->\n"
-            f"- [ ] Freehand\n"
-            f"- [ ] Freehand log — run `.claude/bin/tasks freehand log` to capture chat_log messages, "
-            f"then retro-add checked gates for work done\n"
-            f"- [ ] Rewrite this freehand work into normal task gates inside this task so the final trace reads like ordinary tracked work\n"
-            f"- [ ] Rename this task folder and header to match what was actually done, then check this gate last\n"
-        )
+            freehand_block = (
+                f"\n### Freehand\n"
+                f"<!-- freehand-start: {now_iso} -->\n"
+                f"- [ ] Freehand\n"
+                f"- [ ] Freehand log — run `.claude/bin/tasks freehand log` to capture chat_log messages, "
+                f"then retro-add checked gates for work done\n"
+                f"- [ ] Rewrite this freehand work into normal task gates inside this task so the final trace reads like ordinary tracked work\n"
+                f"- [ ] Rename this task folder and header to match what was actually done, then check this gate last\n"
+            )
 
-        # Find Work Plan section and insert before first unchecked gate there
-        import re
-        work_plan_match = re.search(r'^## Work Plan\b', task_text, re.MULTILINE)
-        if work_plan_match:
-            # Search for first unchecked gate after Work Plan header
-            after_wp = task_text[work_plan_match.start():]
-            gate_match = re.search(r'^- \[ \]', after_wp, re.MULTILINE)
-            if gate_match:
-                insert_pos = work_plan_match.start() + gate_match.start()
-            else:
-                # No unchecked gates — find the next --- separator and insert before it
-                sep_match = re.search(r'\n---\n', after_wp)
-                if sep_match:
-                    insert_pos = work_plan_match.start() + sep_match.start()
+            # Find Work Plan section and insert before first unchecked gate there
+            import re
+            work_plan_match = re.search(r'^## Work Plan\b', task_text, re.MULTILINE)
+            if work_plan_match:
+                after_wp = task_text[work_plan_match.start():]
+                gate_match = re.search(r'^- \[ \]', after_wp, re.MULTILINE)
+                if gate_match:
+                    insert_pos = work_plan_match.start() + gate_match.start()
                 else:
-                    insert_pos = len(task_text)
-        else:
-            # No Work Plan section — append at end
-            insert_pos = len(task_text)
+                    sep_match = re.search(r'\n---\n', after_wp)
+                    if sep_match:
+                        insert_pos = work_plan_match.start() + sep_match.start()
+                    else:
+                        insert_pos = len(task_text)
+            else:
+                insert_pos = len(task_text)
 
-        new_text = task_text[:insert_pos] + freehand_block + "\n" + task_text[insert_pos:]
-        task_file.write_text(new_text, encoding="utf-8")
-        print(f"Freehand block inserted in task {task_num}")
+            new_text = task_text[:insert_pos] + freehand_block + "\n" + task_text[insert_pos:]
+            task_file.write_text(new_text, encoding="utf-8")
+            print(f"Freehand block inserted in task {task_num}")
         print(f"Freehand mode active. Agent: wait for user instructions. Close only when user says done.")
 
     elif cmd == "doctor":
