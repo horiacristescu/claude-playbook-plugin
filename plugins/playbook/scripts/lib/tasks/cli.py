@@ -183,6 +183,30 @@ def find_project_root() -> Path:
     return cwd
 
 
+def _gc_dead_pid_sessions(project_path: Path) -> None:
+    """Remove session dirs for dead PID-named sessions.
+
+    Called at every tasks invocation. Cost: O(N sessions × 1 syscall).
+    Only cleans pid-{N} dirs — UUID sessions are handled by the 24h GC elsewhere.
+    """
+    sessions_dir = project_path / ".agent" / "sessions"
+    if not sessions_dir.exists():
+        return
+    for session_dir in sessions_dir.iterdir():
+        if not session_dir.is_dir() or not session_dir.name.startswith("pid-"):
+            continue
+        try:
+            pid = int(session_dir.name[4:])
+        except ValueError:
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            shutil.rmtree(session_dir, ignore_errors=True)
+        except PermissionError:
+            pass  # process exists, not ours to signal — keep
+
+
 def print_usage():
     from tasks.template import usage_text
     print(usage_text())
@@ -200,6 +224,8 @@ def main():
     if not args or args[0] in ("-h", "--help", "help"):
         print_usage()
         return
+
+    _gc_dead_pid_sessions(find_project_root())
 
     cmd = args[0]
     cmd_args = args[1:]

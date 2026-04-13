@@ -37,7 +37,8 @@ def main() -> int:
     turn_id = payload.get("turn_id")
 
     project_root = _find_project_root()
-    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+    from provider.codex_hooks import resolve_session_id, save_turn_baseline
+    session_id = resolve_session_id()
     save_turn_baseline(project_root, session_id, turn_id)
     return 0
 

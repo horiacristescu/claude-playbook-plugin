@@ -21,6 +21,22 @@ MISSING_FILE_DIGEST = "__MISSING__"
 SESSION_BASELINE_KEY = "__session__"
 
 
+def resolve_session_id() -> str:
+    """Best available session ID for Codex hook scripts.
+
+    Priority:
+    1. PLAYBOOK_SESSION_ID — set by bin/playbook-codex wrapper (may not survive sandbox)
+    2. CODEX_THREAD_ID — native Codex env var, stable per session, always present
+    3. pid-{ppid} — parent process PID (the Codex process that spawned this hook)
+    """
+    import os as _os
+    return (
+        _os.environ.get("PLAYBOOK_SESSION_ID")
+        or _os.environ.get("CODEX_THREAD_ID")
+        or f"pid-{_os.getppid()}"
+    )
+
+
 def codex_config_path(home_dir: Path | None = None) -> Path:
     """Return the global Codex config.toml path."""
     base = home_dir if home_dir is not None else Path.home()
