@@ -8,8 +8,11 @@ pure/testable while the small scripts in scripts/ act as thin entrypoints.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
+import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -19,6 +22,9 @@ from .policy import _is_code_file_path
 HOOK_TIMEOUT_MS = 5000
 MISSING_FILE_DIGEST = "__MISSING__"
 SESSION_BASELINE_KEY = "__session__"
+_CHAT_LOG_HEADER = "# Project Chat Log\n\nUser messages logged with timestamps.\n\n"
+_OLD_CHAT_HEADER_RE = re.compile(r"^\*\*\[([0-9-]{10} [0-9:]{8} UTC)\]\*\*(.*)$")
+_NEW_CHAT_HEADER_RE = re.compile(r"^\*\*\[M(\d{3,})\]\*\* ")
 
 
 def resolve_session_id() -> str:
@@ -211,6 +217,137 @@ def _turn_baseline_file(project_root: Path, session_id: str, turn_id: str | None
     session_dir = project_root / ".agent" / "sessions" / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir / f"codex-dirty-baseline-{safe_turn_id}.json"
+
+
+def _chat_log_path(project_root: Path) -> Path:
+    return project_root / ".agent" / "chat_log.md"
+
+
+def _chat_counter_path(project_root: Path) -> Path:
+    return project_root / ".agent" / "chat_log_counter"
+
+
+def _session_counter_path(project_root: Path, session_id: str) -> Path:
+    return project_root / ".agent" / "sessions" / session_id / "counters"
+
+
+def _agent_dir_writable(project_root: Path) -> bool:
+    agent_dir = project_root / ".agent"
+    return agent_dir.is_dir() and agent_dir.exists() and os.access(agent_dir, os.W_OK)
+
+
+def _normalize_prompt(prompt: str) -> str:
+    text = prompt.replace("\n", " ")
+    text = re.sub(r" +", " ", text)
+    text = re.sub(r"<ide_opened_file>[^<]*</ide_opened_file>", "", text)
+    text = re.sub(r"<ide_selection>[^<]*</ide_selection>", "", text)
+    text = text.strip()
+
+    max_len = 500
+    if len(text) > max_len:
+        removed = len(text) - max_len
+        text = f"{text[:max_len]}...[{removed} chars removed]"
+    return text
+
+
+def _migrate_chat_log_if_needed(log_path: Path, counter_path: Path) -> None:
+    if not log_path.exists():
+        return
+    original = log_path.read_text(encoding="utf-8")
+    if not original.strip():
+        return
+    if any(_NEW_CHAT_HEADER_RE.match(line) for line in original.splitlines()):
+        return
+    if not any(_OLD_CHAT_HEADER_RE.match(line) for line in original.splitlines()):
+        return
+
+    msg_num = 0
+    new_lines: list[str] = []
+    for line in original.splitlines():
+        match = _OLD_CHAT_HEADER_RE.match(line)
+        if match:
+            msg_num += 1
+            suffix = match.group(2)
+            new_lines.append(f"**[M{msg_num:03d}]** [{match.group(1)}]{suffix}")
+        else:
+            new_lines.append(line)
+    new_text = "\n".join(new_lines)
+    if original.endswith("\n"):
+        new_text += "\n"
+    log_path.write_text(new_text, encoding="utf-8")
+    counter_path.write_text(f"{msg_num}\n", encoding="utf-8")
+
+
+def _current_chat_counter(log_path: Path, counter_path: Path) -> int:
+    if counter_path.exists():
+        try:
+            return int(counter_path.read_text(encoding="utf-8").strip() or "0")
+        except ValueError:
+            pass
+
+    highest = 0
+    if log_path.exists():
+        for line in log_path.read_text(encoding="utf-8").splitlines():
+            match = _NEW_CHAT_HEADER_RE.match(line)
+            if match:
+                highest = max(highest, int(match.group(1)))
+    return highest
+
+
+def reset_session_counters(project_root: Path, session_id: str) -> Path:
+    counter_path = _session_counter_path(project_root, session_id)
+    counter_path.parent.mkdir(parents=True, exist_ok=True)
+
+    preserved: list[str] = []
+    if counter_path.exists():
+        for line in counter_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("gate_"):
+                preserved.append(line)
+
+    lines = ["tools=0", "writes=0", *preserved]
+    counter_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return counter_path
+
+
+def append_prompt_to_chat_log(
+    project_root: Path,
+    session_id: str,
+    prompt: str | None,
+    *,
+    timestamp: dt.datetime | None = None,
+) -> bool:
+    """Append a Codex UserPromptSubmit prompt to .agent/chat_log.md.
+
+    Returns True when a non-empty prompt was logged, False when logging was
+    intentionally skipped (e.g. empty prompt or non-writable .agent/).
+    """
+    if not _agent_dir_writable(project_root):
+        return False
+
+    user_message = _normalize_prompt(prompt or "")
+    if not user_message:
+        return False
+
+    log_path = _chat_log_path(project_root)
+    counter_path = _chat_counter_path(project_root)
+
+    if not log_path.exists():
+        log_path.write_text(_CHAT_LOG_HEADER, encoding="utf-8")
+
+    _migrate_chat_log_if_needed(log_path, counter_path)
+
+    ts = (timestamp or dt.datetime.now(dt.timezone.utc)).strftime("%Y-%m-%d %H:%M:%S UTC")
+    current = _current_chat_counter(log_path, counter_path)
+    next_id = current + 1
+    counter_path.write_text(f"{next_id}\n", encoding="utf-8")
+
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write("---\n\n")
+        f.write(f"**[M{next_id:03d}]** [{ts}] `HOST` (codex)\n\n")
+        f.write(f"{user_message}\n\n")
+
+    reset_session_counters(project_root, session_id)
+    return True
 
 
 def _digest_for_file(path: Path) -> str:

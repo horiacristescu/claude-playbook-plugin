@@ -174,7 +174,7 @@ MSG_ID=$(get_next_id "$COUNTER_FILE")
 # Append to local chat log with message ID
 echo "---" >> "$LOCAL_LOG"
 echo "" >> "$LOCAL_LOG"
-echo "**[$MSG_ID]** [$TIMESTAMP] \`HOST\`" >> "$LOCAL_LOG"
+echo "**[$MSG_ID]** [$TIMESTAMP] \`HOST\` (claude)" >> "$LOCAL_LOG"
 echo "" >> "$LOCAL_LOG"
 echo "$USER_MESSAGE" >> "$LOCAL_LOG"
 echo "" >> "$LOCAL_LOG"
