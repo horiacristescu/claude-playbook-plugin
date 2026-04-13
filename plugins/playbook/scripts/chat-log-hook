@@ -180,10 +180,7 @@ echo "$USER_MESSAGE" >> "$LOCAL_LOG"
 echo "" >> "$LOCAL_LOG"
 
 # Reset tool/write counters for this session (new user prompt = fresh count)
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
-if [ -z "$SESSION_ID" ]; then
-    SESSION_ID="default"
-fi
+SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
 SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
 mkdir -p "$SESSION_DIR"
 reset_counters "$SESSION_DIR/counters"

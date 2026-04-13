@@ -461,14 +461,17 @@ def has_new_code_changes(baseline: dict[str, str], current: dict[str, str]) -> b
 def _active_task_stop_decision(project_root: Path, session_id: str) -> dict:
     """Reuse the existing authoritative stop guard for active-task sessions."""
     stop_hook = playbook_scripts_dir() / "stop-hook"
+    env = os.environ.copy()
+    env["PLAYBOOK_SESSION_ID"] = session_id
     try:
         result = subprocess.run(
             ["bash", str(stop_hook)],
             cwd=project_root,
-            input=json.dumps({"session_id": session_id}),
+            input=json.dumps({}),
             text=True,
             capture_output=True,
             check=False,
+            env=env,
         )
     except OSError as exc:
         return {

@@ -71,15 +71,12 @@ fi
 # Read stdin (PreToolUse JSON)
 INPUT=$(cat)
 
-# Extract session_id and tool name
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || echo "")
+# Session ID: env var (set by session-start-hook) or pid-$PPID fallback
+SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
 
-# Use per-session subdirectory when session_id is known
-if [ -n "$SESSION_ID" ]; then
-    SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
-    STATE_FILE="$SESSION_DIR/current_state"
-fi
+SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+STATE_FILE="$SESSION_DIR/current_state"
 mkdir -p "$SESSION_DIR"
 
 # --- Eval mode: skip guards if pretool_guard=off (keep session injection in Guard 2) ---

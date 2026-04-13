@@ -21,13 +21,9 @@ if ! agent_dir_writable "$PROJECT_DIR"; then
     exit 0
 fi
 
-# Read stdin (SessionEnd JSON) — extract session_id
+# Session ID: pid-$PPID (matches session-start-hook)
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
+SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
 
 # Remove entire session directory (state + counters + offset)
 SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"

@@ -88,9 +88,9 @@ if ! agent_dir_writable "$PROJECT_DIR"; then
     AGENT_WRITABLE=false
 fi
 
-# Read stdin (PostToolUse JSON) — parse session_id for per-session state
+# Read stdin (PostToolUse JSON)
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null || echo "")
+SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_name',''))" 2>/dev/null || echo "")
 
 # --- Eval mode: read config flags if PLAYBOOK_EVAL_CONFIG is set ---
@@ -104,8 +104,7 @@ if [ -n "$PLAYBOOK_EVAL_CONFIG" ] && [ -f "$PLAYBOOK_EVAL_CONFIG" ]; then
     echo "gate_echo=${EVAL_GATE_ECHO},nudges=${EVAL_NUDGES}" > "$PROJECT_DIR/.agent/eval-marker" 2>/dev/null || true
 fi
 
-# Per-session subdirectory; "default" fallback when no session_id
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/${SESSION_ID:-default}"
+SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
 mkdir -p "$SESSION_DIR"
 STATE_FILE="$SESSION_DIR/current_state"
 COUNTER_FILE="$SESSION_DIR/counters"
