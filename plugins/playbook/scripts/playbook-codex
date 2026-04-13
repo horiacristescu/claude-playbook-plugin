@@ -27,8 +27,8 @@ find_project_root() {
 
 PROJECT_ROOT="$(find_project_root)"
 
-# Generate unique session ID
-SESSION_ID="$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')"
+# PID-based session ID: pid-$$ (this wrapper's PID = parent of codex process)
+SESSION_ID="pid-$$"
 export PLAYBOOK_SESSION_ID="$SESSION_ID"
 export PLAYBOOK_PROJECT_ROOT="$PROJECT_ROOT"
 

@@ -16,13 +16,11 @@ set -e
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$HOOK_DIR/gate-echo-lib.sh"
 
-# Parse session_id from stdin JSON
+# Use PID-based session ID: pid-<PPID> (the agent process).
+# PPID is stable for the session lifetime and allows instant GC via kill -0.
+# We ignore the UUID from CC runtime stdin — PIDs are simpler and verifiable.
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('session_id',''))" 2>/dev/null)
-
-if [ -z "$SESSION_ID" ]; then
-    exit 0
-fi
+SESSION_ID="pid-$PPID"
 
 # Write to CLAUDE_ENV_FILE so it persists for all Bash calls this session
 if [ -n "$CLAUDE_ENV_FILE" ]; then

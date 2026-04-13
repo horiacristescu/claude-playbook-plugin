@@ -204,7 +204,7 @@ def _gc_dead_sessions(project_path: Path) -> None:
                 except OSError:
                     pass
 
-    # Clean stale session dirs (current_state older than 24h)
+    # Clean stale session dirs
     if not sessions_dir.exists():
         return
     cutoff = time.time() - 86400
@@ -215,12 +215,23 @@ def _gc_dead_sessions(project_path: Path) -> None:
         # Never remove our own session
         if own_session and session_dir.name == own_session:
             continue
-        state_file = session_dir / "current_state"
-        try:
-            if state_file.exists() and state_file.stat().st_mtime >= cutoff:
-                continue  # fresh — keep
-        except OSError:
-            pass
+        name = session_dir.name
+        # PID-based sessions: instant GC via kill -0 liveness check
+        if name.startswith("pid-"):
+            try:
+                pid = int(name[4:])
+                os.kill(pid, 0)  # raises OSError if process is dead
+                continue  # still alive — keep
+            except (ValueError, OSError):
+                pass  # dead or invalid — remove
+        else:
+            # Non-PID sessions (legacy UUIDs, "default"): 24h mtime fallback
+            state_file = session_dir / "current_state"
+            try:
+                if state_file.exists() and state_file.stat().st_mtime >= cutoff:
+                    continue  # fresh — keep
+            except OSError:
+                pass
         shutil.rmtree(session_dir, ignore_errors=True)
 
 
