@@ -343,7 +343,7 @@ def append_prompt_to_chat_log(
 
     with log_path.open("a", encoding="utf-8") as f:
         f.write("---\n\n")
-        f.write(f"**[M{next_id:03d}]** [{ts}] `HOST` (codex)\n\n")
+        f.write(f"**[M{next_id:03d}]** [{ts}] `HOST` (codex/{session_id})\n\n")
         f.write(f"{user_message}\n\n")
 
     reset_session_counters(project_root, session_id)

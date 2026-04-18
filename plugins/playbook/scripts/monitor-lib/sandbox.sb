@@ -1,0 +1,39 @@
+; Seatbelt profile for the conversation monitor agent (macOS)
+;
+; Writes ALLOWED only to:
+;   - .agent/monitor/pids/${SESSION_ID}/   (monitor's own per-PID state)
+;   - Standard system areas (/tmp, /var/folders, ~/.cache, ~/.claude, /dev)
+;
+; Writes BLOCKED everywhere else, including:
+;   - sibling monitor PID dirs (no cross-PID corruption)
+;   - .agent/monitor/rules.md and MONITOR_MIND_MAP.md (shared state, propose-accept only)
+;   - project src/, scripts/, tests/, docs/
+;   - .agent/sessions/, .agent/tasks/, .agent/chat_log.md
+;
+; Pattern: blacklist-except-whitelist via (require-all + require-not ...),
+; borrowed from bin/sandbox. The naive (deny file-write*) + (allow subpath)
+; pattern does NOT work — seatbelt allows writes if ANY allow rule matches.
+;
+; Launcher substitutes ${SESSION_ID}, ${PROJECT_DIR}, ${HOME_DIR}.
+
+(version 1)
+(allow default)
+
+(deny file-write*
+    (require-all
+        (require-not (subpath "${PROJECT_DIR}/.agent/monitor/pids/${SESSION_ID}"))
+        (require-not (subpath "/tmp"))
+        (require-not (subpath "/private/tmp"))
+        (require-not (subpath "/var/folders"))
+        (require-not (subpath "/private/var/folders"))
+        (require-not (subpath "${HOME_DIR}/.cache"))
+        (require-not (subpath "${HOME_DIR}/.claude"))
+        (require-not (subpath "${HOME_DIR}/.local"))
+        (require-not (subpath "${HOME_DIR}/Library"))
+        (require-not (subpath "/dev"))
+    )
+)
+
+; Block reads of .agent/sessions/ (front agent's state, not monitor's concern)
+(deny file-read*
+    (subpath "${PROJECT_DIR}/.agent/sessions"))

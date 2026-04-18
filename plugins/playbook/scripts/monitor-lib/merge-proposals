@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""merge-proposals — review monitor proposals and apply accepted ones.
+
+The monitor cannot write shared state (rules.md, MONITOR_MIND_MAP.md) directly;
+it writes proposals to pids/<session-id>/rules.propose.md and mindmap.propose.md.
+This tool reviews those proposals interactively and merges accepted ones.
+
+Usage:
+    .agent/monitor/merge-proposals            # interactive review
+    .agent/monitor/merge-proposals --yes      # accept all without prompting
+    .agent/monitor/merge-proposals --list     # list pending proposals, no merge
+"""
+import argparse
+import shutil
+import sys
+import time
+from pathlib import Path
+
+
+MONITOR_DIR = Path(__file__).resolve().parent
+SHARED_TARGETS = {
+    "rules.propose.md": MONITOR_DIR / "rules.md",
+    "mindmap.propose.md": MONITOR_DIR / "MONITOR_MIND_MAP.md",
+}
+
+
+def find_proposals() -> list[tuple[Path, Path]]:
+    """Return [(proposal_path, target_shared_file), ...] sorted by mtime."""
+    out = []
+    for propose_name, target in SHARED_TARGETS.items():
+        for p in sorted(
+            (MONITOR_DIR / "pids").glob(f"*/{propose_name}"),
+            key=lambda p: p.stat().st_mtime,
+        ):
+            try:
+                if p.stat().st_size > 0:
+                    out.append((p, target))
+            except OSError:
+                continue
+    return out
+
+
+def prompt_yes_no(question: str) -> bool:
+    while True:
+        ans = input(f"{question} [y/N/q]: ").strip().lower()
+        if ans in ("y", "yes"):
+            return True
+        if ans in ("", "n", "no"):
+            return False
+        if ans in ("q", "quit"):
+            print("aborted")
+            sys.exit(0)
+
+
+def apply_proposal(proposal: Path, target: Path) -> None:
+    """Append proposal contents to target, archive the proposal."""
+    import datetime as _dt
+    content = proposal.read_text()
+    now = _dt.datetime.now(_dt.timezone.utc)
+    stamp_human = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    # Microsecond-precision stamp for archive names (avoids collisions
+    # when multiple proposals are merged in the same second via --yes).
+    stamp_archive = now.strftime("%Y%m%dT%H%M%S%fZ")
+    source = proposal.parent.name  # pid-XXX
+
+    with target.open("a") as tf:
+        tf.write(f"\n<!-- merged from pids/{source}/{proposal.name} at {stamp_human} -->\n")
+        tf.write(content.rstrip() + "\n")
+
+    # Archive — include source pid + microsecond stamp for uniqueness
+    archive = proposal.with_suffix(f".md.merged-{source}-{stamp_archive}")
+    shutil.move(str(proposal), str(archive))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--yes", action="store_true", help="accept all, no prompts")
+    ap.add_argument("--list", action="store_true", help="list pending only, no merge")
+    args = ap.parse_args()
+
+    proposals = find_proposals()
+    if not proposals:
+        print("No pending proposals.")
+        return
+
+    print(f"{len(proposals)} pending proposal(s):")
+    for p, target in proposals:
+        print(f"  {p.relative_to(MONITOR_DIR)} → {target.relative_to(MONITOR_DIR)}"
+              f" ({p.stat().st_size} bytes)")
+    print()
+
+    if args.list:
+        return
+
+    for proposal, target in proposals:
+        print("=" * 60)
+        print(f"FROM: {proposal.relative_to(MONITOR_DIR)}")
+        print(f"INTO: {target.relative_to(MONITOR_DIR)}")
+        print("-" * 60)
+        print(proposal.read_text().rstrip())
+        print("=" * 60)
+
+        if args.yes or prompt_yes_no("Accept this proposal?"):
+            apply_proposal(proposal, target)
+            print(f"  → merged into {target.name}, archived proposal")
+        else:
+            # Leave it in place
+            print("  → skipped (proposal remains for next review)")
+        print()
+
+
+if __name__ == "__main__":
+    main()

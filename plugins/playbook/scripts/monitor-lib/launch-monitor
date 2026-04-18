@@ -1,0 +1,95 @@
+#!/bin/bash
+# launch-monitor — start claude as the conversation monitor, sandboxed
+#
+# Forked from .claude/bin/sandbox's pattern (which works). Differences:
+#   - Writable scope narrowed from whole PROJECT_DIR to .agent/monitor/pids/<SESSION_ID>/
+#   - Disables playbook plugin hooks via --settings '{}' so the monitor's own
+#     claude startup doesn't hang on session-start-hook (which would try to
+#     write to .agent/sessions/, outside our narrow scope)
+#
+# Usage:
+#   .agent/monitor/launch-monitor --session-id <front-agent-pid>
+#   PLAYBOOK_SESSION_ID=pid-29309 .agent/monitor/launch-monitor
+
+set -e
+
+MONITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$MONITOR_DIR/../.." && pwd -P)"
+HOME_DIR="$HOME"
+
+# --- Parse --session-id ---
+SESSION_ID="${PLAYBOOK_SESSION_ID:-}"
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --session-id)      SESSION_ID="$2";           shift 2 ;;
+        --session-id=*)    SESSION_ID="${1#*=}";      shift ;;
+        *)                 ARGS+=("$1");              shift ;;
+    esac
+done
+
+if [ -z "$SESSION_ID" ]; then
+    echo "Error: no session id set" >&2
+    echo "  Usage: launch-monitor --session-id <front-agent-pid>" >&2
+    echo "  Or:    PLAYBOOK_SESSION_ID=pid-XXX launch-monitor" >&2
+    exit 1
+fi
+
+# Validate SESSION_ID — path traversal guard.
+if ! echo "$SESSION_ID" | grep -Eq '^pid-[0-9]+$'; then
+    echo "Error: invalid SESSION_ID '$SESSION_ID' (expected pid-<digits>)" >&2
+    exit 2
+fi
+
+PID_DIR="$MONITOR_DIR/pids/$SESSION_ID"
+mkdir -p "$PID_DIR"
+
+# --- Seatbelt profile (forked from bin/sandbox) ---
+# Writable: monitor's per-session pid dir + standard system areas.
+# Denied: everything else, including:
+#   - sibling pids/ dirs
+#   - .agent/monitor/rules.md, MONITOR_MIND_MAP.md (shared state, propose-accept only)
+#   - project src/, scripts/, tests/, .agent/sessions/, .agent/chat_log.md
+# ~/.local and ~/Library must be writable for claude's interactive UI startup.
+PROFILE="(version 1)
+(allow default)
+(deny file-write*
+    (require-all
+        (require-not (subpath \"$PID_DIR\"))
+        (require-not (subpath \"/tmp\"))
+        (require-not (subpath \"/private/tmp\"))
+        (require-not (subpath \"/var/folders\"))
+        (require-not (subpath \"/private/var/folders\"))
+        (require-not (regex #\"^$HOME_DIR/\\.claude\"))
+        (require-not (subpath \"$HOME_DIR/.cache\"))
+        (require-not (subpath \"$HOME_DIR/.local\"))
+        (require-not (subpath \"$HOME_DIR/Library\"))
+        (require-not (subpath \"/dev\"))
+    )
+)"
+
+# --- Disable playbook plugin hooks for the monitor session ---
+# Without this, claude's session-start-hook fires on startup and tries to
+# write to .agent/sessions/<id>/ — sandbox-blocked → claude hangs. The
+# monitor doesn't need playbook hooks; it uses its own CLAUDE.md + bootstrap.sh.
+NOHOOKS_FILE="/tmp/playbook-monitor-no-hooks-$$.json"
+echo '{}' > "$NOHOOKS_FILE"
+
+echo "[launch-monitor] watching session: $SESSION_ID" >&2
+echo "[launch-monitor] writable: $PID_DIR (+ system dirs)" >&2
+
+export PLAYBOOK_SESSION_ID="$SESSION_ID"
+cd "$PROJECT_DIR"
+
+# Run bootstrap.sh to produce the full briefing, then pass it as claude's
+# initial user message. Claude starts interactive with context already loaded;
+# the CLAUDE.md directive ("first action: run bootstrap") is effectively
+# pre-satisfied, so the monitor goes straight to forming a first judgment.
+BOOTSTRAP_OUT=$("$MONITOR_DIR/bootstrap.sh" 2>&1)
+SEED="$BOOTSTRAP_OUT
+
+---
+
+That was your bootstrap output. Based on the briefing above, form your initial judgment, append to session.md (using the SESSION.MD APPEND command from the COMMANDS section), and run the WAIT COMMAND."
+
+exec sandbox-exec -p "$PROFILE" claude --dangerously-skip-permissions --settings "$NOHOOKS_FILE" "${ARGS[@]}" "$SEED"

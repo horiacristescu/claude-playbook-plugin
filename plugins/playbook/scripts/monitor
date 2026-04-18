@@ -1,0 +1,61 @@
+#!/bin/bash
+# monitor — top-level CLI for the conversation monitor
+#
+# Usage:
+#   monitor start [--session-id ID]     launch monitor as a sandboxed claude session
+#   monitor merge                       review + apply pending proposals
+#   monitor --help                      this help
+#
+# Invoked via the target project's .claude/bin/monitor wrapper, which locates
+# this file in the plugin cache via `find ~/.claude/plugins`. Sub-scripts live
+# in scripts/monitor-lib/ (sibling directory to this file).
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/monitor-lib"
+
+if [ ! -d "$LIB_DIR" ]; then
+    echo "Error: monitor-lib/ not found next to $0" >&2
+    exit 1
+fi
+
+usage() {
+    cat <<EOF
+Usage: monitor <subcommand> [options]
+
+Subcommands:
+  start [--session-id ID]    Launch the monitor as a sandboxed claude session
+                             watching the front agent identified by SESSION_ID.
+                             Defaults to \$PLAYBOOK_SESSION_ID if unset.
+
+  merge                      Review and apply pending monitor proposals.
+                             Scans pids/*/rules.propose.md and
+                             pids/*/mindmap.propose.md, prompts y/N/q per
+                             proposal, appends accepted ones to
+                             .agent/monitor/{rules.md, MONITOR_MIND_MAP.md}.
+
+  --help, -h, help           Show this help.
+EOF
+}
+
+SUB="${1:-}"
+shift || true
+
+case "$SUB" in
+    start)
+        exec "$LIB_DIR/launch-monitor" "$@"
+        ;;
+    merge)
+        exec "$LIB_DIR/merge-proposals" "$@"
+        ;;
+    --help|-h|help|"")
+        usage
+        exit 0
+        ;;
+    *)
+        echo "Error: unknown subcommand '$SUB'" >&2
+        usage
+        exit 1
+        ;;
+esac

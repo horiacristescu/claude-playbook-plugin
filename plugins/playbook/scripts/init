@@ -195,6 +195,98 @@ else
 fi
 # END:bash-log
 
+# --- (g) Monitor scaffolding ---
+# Scaffolds .agent/monitor/ (per-project state dir) + .claude/hooks/monitor-nudge.sh
+# (non-plugin hook for nudge injection) + .claude/bin/monitor wrapper + registers
+# PostToolUse hook in .claude/settings.json. Idempotent.
+
+MONITOR_LIB_DIR=""
+MONITOR_HOOK_SRC=""
+# SCRIPT_DIR may be the plugin cache dir (normal) or the dev repo's scripts/ dir.
+# Look for monitor-lib alongside this script first; fall back to plugin cache.
+if [ -d "$SCRIPT_DIR/monitor-lib" ]; then
+    MONITOR_LIB_DIR="$SCRIPT_DIR/monitor-lib"
+else
+    MONITOR_LIB_DIR=$(find ~/.claude/plugins -path '*/playbook/scripts/monitor-lib' -type d 2>/dev/null | head -1)
+fi
+# monitor-nudge.sh ships in hooks/ (parent of scripts/).
+if [ -f "$SCRIPT_DIR/../hooks/monitor-nudge.sh" ]; then
+    MONITOR_HOOK_SRC="$SCRIPT_DIR/../hooks/monitor-nudge.sh"
+else
+    MONITOR_HOOK_SRC=$(find ~/.claude/plugins -path '*/playbook/hooks/monitor-nudge.sh' -type f 2>/dev/null | head -1)
+fi
+
+if [ -n "$MONITOR_LIB_DIR" ] && [ -d "$MONITOR_LIB_DIR" ]; then
+    MON_DIR="$PROJECT_DIR/.agent/monitor"
+    MON_STATE_CREATED=0
+    mkdir -p "$MON_DIR/pids"
+
+    # Copy CLAUDE.md + sandbox.sb (templates — always re-copy so updates propagate)
+    cp "$MONITOR_LIB_DIR/CLAUDE.md" "$MON_DIR/CLAUDE.md"
+    cp "$MONITOR_LIB_DIR/sandbox.sb" "$MON_DIR/sandbox.sb"
+
+    # Copy blank state stubs ONLY if target doesn't already have them
+    for stub in MONITOR_MIND_MAP.md rules.md; do
+        if [ ! -f "$MON_DIR/$stub" ]; then
+            cp "$MONITOR_LIB_DIR/stubs/$stub" "$MON_DIR/$stub"
+            MON_STATE_CREATED=1
+        fi
+    done
+
+    if [ "$MON_STATE_CREATED" = "1" ]; then
+        CREATED+=(".agent/monitor/ (scaffolded)")
+    else
+        SKIPPED+=(".agent/monitor/ (state files exist)")
+    fi
+
+    # Copy monitor-nudge.sh into target's .claude/hooks/
+    if [ -n "$MONITOR_HOOK_SRC" ] && [ -f "$MONITOR_HOOK_SRC" ]; then
+        mkdir -p "$PROJECT_DIR/.claude/hooks"
+        cp "$MONITOR_HOOK_SRC" "$PROJECT_DIR/.claude/hooks/monitor-nudge.sh"
+        chmod +x "$PROJECT_DIR/.claude/hooks/monitor-nudge.sh"
+        CREATED+=(".claude/hooks/monitor-nudge.sh")
+    else
+        FAILED+=("monitor-nudge.sh source not found")
+    fi
+
+    # Create .claude/bin/monitor wrapper (same pattern as sandbox, tasks)
+    create_wrapper "$PROJECT_DIR" monitor
+    if [ -f "$PROJECT_DIR/.claude/bin/monitor" ]; then
+        CREATED+=(".claude/bin/monitor")
+    fi
+
+    # Register PostToolUse hook for monitor-nudge in .claude/settings.json
+    NUDGE_HOOK_CMD='bash "$CLAUDE_PROJECT_DIR/.claude/hooks/monitor-nudge.sh"'
+    HOOK_RESULT=$(python3 -c "
+import json, os
+path = '$SETTINGS_FILE'
+target_cmd = '''$NUDGE_HOOK_CMD'''
+try:
+    data = json.loads(open(path).read()) if os.path.exists(path) else {}
+    hooks = data.setdefault('hooks', {})
+    posthook = hooks.setdefault('PostToolUse', [])
+    already = any(
+        any(h.get('command') == target_cmd for h in (b.get('hooks') or []))
+        for b in posthook if isinstance(b, dict)
+    )
+    if already:
+        print('SKIPPED')
+    else:
+        posthook.append({'matcher': '', 'hooks': [{'type': 'command', 'command': target_cmd}]})
+        open(path, 'w').write(json.dumps(data, indent=2) + '\n')
+        print('CREATED')
+except Exception as e:
+    print('ERROR:' + str(e))
+" 2>&1)
+    case "$HOOK_RESULT" in
+        CREATED)  CREATED+=("settings.json PostToolUse monitor-nudge hook") ;;
+        SKIPPED)  SKIPPED+=("settings.json PostToolUse monitor-nudge (already registered)") ;;
+        ERROR:*)  FAILED+=("settings.json monitor hook: ${HOOK_RESULT#ERROR:}") ;;
+    esac
+else
+    SKIPPED+=(".agent/monitor/ (monitor-lib not found in plugin)")
+fi
+
 # --- (f) Summary ---
 echo "playbook init: $PROJECT_NAME"
 echo ""

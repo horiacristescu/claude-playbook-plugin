@@ -171,16 +171,18 @@ fi
 # Get next message ID
 MSG_ID=$(get_next_id "$COUNTER_FILE")
 
-# Append to local chat log with message ID
+# Session ID (needed for PID tag in chat log and counter reset)
+SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
+SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+
+# Append to local chat log with message ID and PID tag
 echo "---" >> "$LOCAL_LOG"
 echo "" >> "$LOCAL_LOG"
-echo "**[$MSG_ID]** [$TIMESTAMP] \`HOST\` (claude)" >> "$LOCAL_LOG"
+echo "**[$MSG_ID]** [$TIMESTAMP] \`HOST\` (claude/$SESSION_ID)" >> "$LOCAL_LOG"
 echo "" >> "$LOCAL_LOG"
 echo "$USER_MESSAGE" >> "$LOCAL_LOG"
 echo "" >> "$LOCAL_LOG"
 
 # Reset tool/write counters for this session (new user prompt = fresh count)
-SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
 mkdir -p "$SESSION_DIR"
 reset_counters "$SESSION_DIR/counters"
