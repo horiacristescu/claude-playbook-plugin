@@ -7,6 +7,13 @@
 
 set -e
 
+# Skip when invoked from the monitor's own claude session (see launch-monitor).
+# Log to stderr so the hook's firing is still visible; only gate-enforcement skipped.
+if [ "${PLAYBOOK_ROLE:-}" = "monitor" ]; then
+    echo "[$(basename "$0")] skip (PLAYBOOK_ROLE=monitor)" >&2
+    exit 0
+fi
+
 # Tool-type-aware micro-reflection nudges — 5 classes, each naming a specific failure mode.
 # Call 1 on a new gate = silent. Call 2+ = class-specific nudge. Operate = always silent.
 NUDGES_ORIENT=(

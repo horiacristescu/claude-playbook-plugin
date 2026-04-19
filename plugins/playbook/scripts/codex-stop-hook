@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
+
+
 """Codex Stop hook: steer back into Playbook after no-task code edits."""
 
 from __future__ import annotations
+
+# Skip when invoked from the monitor's own claude session (see launch-monitor).
+# Log to stderr so the hook's firing is still visible; only gate-enforcement skipped.
+import os as _os
+import sys as _sys
+if _os.environ.get("PLAYBOOK_ROLE") == "monitor":
+    print(f"[{__file__.rsplit('/', 1)[-1]}] skip (PLAYBOOK_ROLE=monitor)", file=_sys.stderr)
+    _sys.exit(0)
 
 import json
 import os

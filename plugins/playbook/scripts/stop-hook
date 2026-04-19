@@ -8,6 +8,15 @@
 
 set -e
 
+# Skip when invoked from the monitor's own claude session — monitor runs in
+# the same project dir and would otherwise be blocked on the FRONT agent's
+# task gates. Launch-monitor exports PLAYBOOK_ROLE=monitor specifically.
+# Log to stderr so the skip is visible; only gate-enforcement skipped.
+if [ "${PLAYBOOK_ROLE:-}" = "monitor" ]; then
+    echo "[stop-hook] skip (PLAYBOOK_ROLE=monitor)" >&2
+    exit 0
+fi
+
 # Source shared lib (same directory)
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$HOOK_DIR/gate-echo-lib.sh"
