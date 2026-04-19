@@ -219,13 +219,18 @@ fi
 if [ -n "$MONITOR_LIB_DIR" ] && [ -d "$MONITOR_LIB_DIR" ]; then
     MON_DIR="$PROJECT_DIR/.agent/monitor"
     MON_STATE_CREATED=0
-    mkdir -p "$MON_DIR/pids"
+    mkdir -p "$MON_DIR"
 
-    # Copy CLAUDE.md + sandbox.sb (templates — always re-copy so updates propagate)
+    # Copy CLAUDE.md (template — always re-copy so updates propagate)
     cp "$MONITOR_LIB_DIR/CLAUDE.md" "$MON_DIR/CLAUDE.md"
-    cp "$MONITOR_LIB_DIR/sandbox.sb" "$MON_DIR/sandbox.sb"
 
-    # Copy blank state stubs ONLY if target doesn't already have them
+    # T121 flat layout: remove stale sandbox.sb (inline PROFILE in launch-monitor
+    # is the source of truth) and stale pids/ subdir (single session.md now)
+    rm -f "$MON_DIR/sandbox.sb"
+
+    # Copy SSP + mind map stubs ONLY if target doesn't already have them
+    # (stubs carry seed scaffolding — actions/dimensions/features/rules skeleton +
+    # orientation nodes; monitor edits in place as patterns crystallize)
     for stub in MONITOR_MIND_MAP.md rules.md; do
         if [ ! -f "$MON_DIR/$stub" ]; then
             cp "$MONITOR_LIB_DIR/stubs/$stub" "$MON_DIR/$stub"

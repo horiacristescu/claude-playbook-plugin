@@ -2,19 +2,22 @@
 # launch-monitor — start claude as the conversation monitor, sandboxed
 #
 # Forked from .claude/bin/sandbox's pattern (which works). Differences:
-#   - Writable scope narrowed from whole PROJECT_DIR to .agent/monitor/pids/<SESSION_ID>/
+#   - Writable scope narrowed from whole PROJECT_DIR to .agent/monitor/
 #   - Disables playbook plugin hooks via --settings '{}' so the monitor's own
 #     claude startup doesn't hang on session-start-hook (which would try to
 #     write to .agent/sessions/, outside our narrow scope)
 #
 # Usage:
-#   .agent/monitor/launch-monitor --session-id <front-agent-pid>
-#   PLAYBOOK_SESSION_ID=pid-29309 .agent/monitor/launch-monitor
+#   .claude/bin/monitor start                           (auto-detect oldest alive pid)
+#   .claude/bin/monitor start --session-id pid-29309    (explicit override)
 
 set -e
 
-MONITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$MONITOR_DIR/../.." && pwd -P)"
+MONITOR_SRC="$(cd "$(dirname "$0")" && pwd)"
+# When shipped via plugin, $MONITOR_SRC lives in plugin cache — its ../../
+# would point into the plugin, not at the user's project. Use caller's $PWD
+# (inherited through .claude/bin/monitor wrapper) or explicit env var.
+PROJECT_DIR="${PLAYBOOK_PROJECT_DIR:-$PWD}"
 HOME_DIR="$HOME"
 
 # --- Parse --session-id ---
@@ -28,11 +31,49 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Filter to alive pid-* dirs (kill -0 + ps comm contains "claude").
+# Picks oldest by ctime. Exits on 0 alive or 2+ alive (no heuristic
+# to pick the "real" main agent — user must disambiguate via --session-id).
+find_main_session() {
+    local sessions_dir="$PROJECT_DIR/.agent/sessions"
+    [ -d "$sessions_dir" ] || return 1
+
+    local alive=()
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        local pid="${name#pid-}"
+        if kill -0 "$pid" 2>/dev/null && ps -p "$pid" -o comm= 2>/dev/null | grep -q claude; then
+            alive+=("$name")
+        fi
+    done < <(ls -1 "$sessions_dir" 2>/dev/null | grep -E '^pid-[0-9]+$' || true)
+
+    local count="${#alive[@]}"
+    if [ "$count" = "0" ]; then
+        echo "Error: no main agent running (no alive pid-* under .agent/sessions/)" >&2
+        exit 1
+    fi
+    if [ "$count" = "1" ]; then
+        SESSION_ID="${alive[0]}"
+        echo "[launch-monitor] auto-detected session: $SESSION_ID" >&2
+        return 0
+    fi
+    # 2+: pick oldest by ctime (tiebreak unlikely but sort keeps it stable)
+    SESSION_ID=""
+    local best_ts=""
+    for name in "${alive[@]}"; do
+        local ts
+        ts=$(stat -f '%B' "$sessions_dir/$name" 2>/dev/null || stat -c '%W' "$sessions_dir/$name" 2>/dev/null)
+        if [ -z "$best_ts" ] || [ "$ts" -lt "$best_ts" ]; then
+            best_ts="$ts"
+            SESSION_ID="$name"
+        fi
+    done
+    echo "Warning: multiple active sessions found — picking oldest ($SESSION_ID). Override with --session-id:" >&2
+    printf '  %s\n' "${alive[@]}" >&2
+}
+
 if [ -z "$SESSION_ID" ]; then
-    echo "Error: no session id set" >&2
-    echo "  Usage: launch-monitor --session-id <front-agent-pid>" >&2
-    echo "  Or:    PLAYBOOK_SESSION_ID=pid-XXX launch-monitor" >&2
-    exit 1
+    find_main_session
 fi
 
 # Validate SESSION_ID — path traversal guard.
@@ -41,21 +82,24 @@ if ! echo "$SESSION_ID" | grep -Eq '^pid-[0-9]+$'; then
     exit 2
 fi
 
-PID_DIR="$MONITOR_DIR/pids/$SESSION_ID"
-mkdir -p "$PID_DIR"
+# MONITOR_DIR lives in the TARGET project's .agent/monitor/, not the plugin.
+# Flat layout (T121): single state dir, not per-pid subdirs.
+MONITOR_DIR="$PROJECT_DIR/.agent/monitor"
+mkdir -p "$MONITOR_DIR"
 
 # --- Seatbelt profile (forked from bin/sandbox) ---
-# Writable: monitor's per-session pid dir + standard system areas.
+# Writable: .agent/monitor/ (flat layout — T121) + standard system areas.
 # Denied: everything else, including:
-#   - sibling pids/ dirs
-#   - .agent/monitor/rules.md, MONITOR_MIND_MAP.md (shared state, propose-accept only)
-#   - project src/, scripts/, tests/, .agent/sessions/, .agent/chat_log.md
+#   - project src/, scripts/, tests/, .agent/sessions/, .agent/chat_log.md,
+#     .agent/tasks/, MIND_MAP.md
+# Monitor now has r/w on its own rules.md, MONITOR_MIND_MAP.md, session.md
+# (propose-accept dropped — trust-with-audit model).
 # ~/.local and ~/Library must be writable for claude's interactive UI startup.
 PROFILE="(version 1)
 (allow default)
 (deny file-write*
     (require-all
-        (require-not (subpath \"$PID_DIR\"))
+        (require-not (subpath \"$MONITOR_DIR\"))
         (require-not (subpath \"/tmp\"))
         (require-not (subpath \"/private/tmp\"))
         (require-not (subpath \"/var/folders\"))
@@ -76,16 +120,20 @@ NOHOOKS_FILE="/tmp/playbook-monitor-no-hooks-$$.json"
 echo '{}' > "$NOHOOKS_FILE"
 
 echo "[launch-monitor] watching session: $SESSION_ID" >&2
-echo "[launch-monitor] writable: $PID_DIR (+ system dirs)" >&2
+echo "[launch-monitor] writable: $MONITOR_DIR (+ system dirs)" >&2
 
 export PLAYBOOK_SESSION_ID="$SESSION_ID"
+export PLAYBOOK_PROJECT_DIR="$PROJECT_DIR"
+# Distinguish this claude session as the MONITOR, so the nudge-consume hook
+# skips (would otherwise eat our own nudges before front agent sees them).
+export PLAYBOOK_ROLE="monitor"
 cd "$PROJECT_DIR"
 
 # Run bootstrap.sh to produce the full briefing, then pass it as claude's
 # initial user message. Claude starts interactive with context already loaded;
 # the CLAUDE.md directive ("first action: run bootstrap") is effectively
 # pre-satisfied, so the monitor goes straight to forming a first judgment.
-BOOTSTRAP_OUT=$("$MONITOR_DIR/bootstrap.sh" 2>&1)
+BOOTSTRAP_OUT=$("$MONITOR_SRC/bootstrap.sh" 2>&1)
 SEED="$BOOTSTRAP_OUT
 
 ---

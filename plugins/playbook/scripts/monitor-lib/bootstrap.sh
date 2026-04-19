@@ -6,8 +6,8 @@
 # needed to understand the struggle is inlined here.
 #
 # Sections (in this order):
-#   1. Identity (session id, JSONL path, pid dir, commands)
-#   2. Monitor's own state (mind map, rules, prior session.md)
+#   1. Identity (session id, JSONL path, monitor dir, commands)
+#   2. Monitor's own state (mind map, rules, current session.md)
 #   3. Project retros (project-level self-knowledge)
 #   4. Project MIND_MAP.md (institutional memory)
 #   5. Recent closed tasks (Intent + Debrief of last 5)
@@ -16,12 +16,21 @@
 #   8. Recent events (last hour of JSONL, compact extraction)
 #   9. Commands (nudge, session.md append, WAIT)
 #
-# Usage:  bash .agent/monitor/bootstrap.sh [--session-id pid-XXX]
+# Usage:  bash path/to/bootstrap.sh [--session-id pid-XXX]
+# Requires: PLAYBOOK_PROJECT_DIR env var (launcher exports it).
 
 set -e
 
-MONITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$MONITOR_DIR/../.." && pwd)"
+# Path separation (T121 field-bug fix):
+#   MONITOR_SRC = plugin scripts (read-only, $(dirname "$0"))
+#   MONITOR_DIR = target project's writable state dir
+MONITOR_SRC="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "${PLAYBOOK_PROJECT_DIR:-}" ]; then
+    echo "bootstrap.sh: error: PLAYBOOK_PROJECT_DIR not set" >&2
+    echo "  (launch-monitor exports this; don't invoke bootstrap.sh directly)" >&2
+    exit 2
+fi
+PROJECT_ROOT="$PLAYBOOK_PROJECT_DIR"
 
 # ── Session ID resolution (no fallback — see T119 Thread 4) ─────────────
 SESSION_ID="${PLAYBOOK_SESSION_ID:-}"
@@ -46,8 +55,33 @@ fi
 
 SLUG=$(echo "$PROJECT_ROOT" | tr '/' '-')
 JSONL=$(ls -t ~/.claude/projects/$SLUG/*.jsonl 2>/dev/null | head -1)
-PID_DIR="$MONITOR_DIR/pids/$SESSION_ID"
-mkdir -p "$PID_DIR"
+
+# Flat layout (T121): single state dir under target project, no pid subdir.
+MONITOR_DIR="$PROJECT_ROOT/.agent/monitor"
+mkdir -p "$MONITOR_DIR"
+
+# session.md lifecycle (T121): if header's pid matches SESSION_ID, append
+# (same monitor process or clean relaunch against same front agent). Otherwise
+# overwrite with a fresh header and reset sensor state (.offset, trace.md).
+# Rationale: synthesis is re-derivable from jsonl; prefer simple single-file
+# model over archive machinery.
+SESSION_MD="$MONITOR_DIR/session.md"
+OFFSET_FILE="$MONITOR_DIR/.offset"
+TRACE_FILE="$MONITOR_DIR/trace.md"
+
+HEADER_PID=""
+if [ -f "$SESSION_MD" ]; then
+    HEADER_PID=$(grep -m1 -E '^- Watching: pid-[0-9]+' "$SESSION_MD" 2>/dev/null | sed -E 's/.*(pid-[0-9]+).*/\1/')
+fi
+if [ "$HEADER_PID" != "$SESSION_ID" ]; then
+    # Fresh session (or no prior state): overwrite session.md, reset sensor.
+    {
+        echo "# Monitor Session"
+        echo "- Watching: $SESSION_ID"
+        echo "- Started: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+    } > "$SESSION_MD"
+    rm -f "$OFFSET_FILE" "$TRACE_FILE"
+fi
 
 # ── 1. Identity ──────────────────────────────────────────────────────────
 cat <<HEADER
@@ -58,7 +92,7 @@ You are the conversation monitor for the project at:
 
 Front agent session ID: $SESSION_ID
 Front agent JSONL:      $JSONL
-Your pid dir:           $PID_DIR
+Your state dir:         $MONITOR_DIR
 
 This briefing is complete. Do not read any files outside what's inlined below.
 Form an initial judgment, then run the WAIT COMMAND at the bottom.
@@ -78,29 +112,9 @@ echo ""
 echo "### rules.md"
 cat "$MONITOR_DIR/rules.md" 2>/dev/null || echo "(empty)"
 echo ""
-echo "### pids/$SESSION_ID/session.md (your prior judgments on this session)"
-cat "$PID_DIR/session.md" 2>/dev/null || echo "(empty — first wake for this session)"
+echo "### session.md (your wake journal for this session)"
+cat "$SESSION_MD"
 echo ""
-
-# Pending proposals across all PID dirs — surface them so sibling monitors
-# see each other's learnings even before the human merge step runs.
-# (Finding 5 from plan-review: non-graceful monitor exits leave proposals
-# stranded; bootstrap surfacing makes them visible to the next monitor.)
-PROPOSE_FILES=$(ls "$MONITOR_DIR"/pids/*/rules.propose.md "$MONITOR_DIR"/pids/*/mindmap.propose.md 2>/dev/null | while read f; do [ -s "$f" ] && echo "$f"; done)
-if [ -n "$PROPOSE_FILES" ]; then
-    PROPOSE_COUNT=$(echo "$PROPOSE_FILES" | wc -l | tr -d ' ')
-    echo "### Pending proposals from sibling monitors ($PROPOSE_COUNT unmerged)"
-    echo ""
-    echo "> Warning: $PROPOSE_COUNT proposal(s) pending merge. Run \`.agent/monitor/merge-proposals\` to review."
-    echo ""
-    for f in $PROPOSE_FILES; do
-        rel=$(echo "$f" | sed "s|$MONITOR_DIR/||")
-        echo "#### $rel"
-        cat "$f"
-        echo ""
-    done
-fi
-
 echo "---"
 echo ""
 
@@ -248,20 +262,20 @@ PYEOF
     echo ""
     if [ "$LINES" -gt 0 ]; then
         EPHEMERAL_OFFSET=$(mktemp)
-        python3 "$MONITOR_DIR/sensor.py" "$RECENT_FILE" --from-start --offset-file "$EPHEMERAL_OFFSET" 2>/dev/null || echo "(sensor error)"
+        python3 "$MONITOR_SRC/sensor.py" "$RECENT_FILE" --from-start --offset-file "$EPHEMERAL_OFFSET" 2>/dev/null || echo "(sensor error)"
         rm -f "$EPHEMERAL_OFFSET"
     else
         echo "(no events in the last $LOOKBACK seconds — agent is idle)"
     fi
     rm -f "$RECENT_FILE"
 
-    # Set offset to current EOF ONLY on first bootstrap for this session.
-    # If offset already exists, preserve it — otherwise a re-bootstrap during
-    # an active monitor session would silently skip every turn that arrived
-    # since the last wake. (Impl-review Finding #5.)
-    if [ ! -f "$PID_DIR/.offset" ]; then
+    # Seed offset to current EOF on first bootstrap (session.md was fresh-reset
+    # above, so .offset was also deleted). If offset already exists, preserve
+    # it — re-bootstrap during an active monitor session shouldn't skip turns
+    # that arrived since the last wake.
+    if [ ! -f "$OFFSET_FILE" ]; then
         CURRENT_SIZE=$(stat -f%z "$JSONL" 2>/dev/null || stat -c%s "$JSONL" 2>/dev/null || echo 0)
-        echo "$CURRENT_SIZE" > "$PID_DIR/.offset"
+        echo "$CURRENT_SIZE" > "$OFFSET_FILE"
     fi
 else
     echo "(no JSONL found)"
@@ -275,18 +289,18 @@ cat <<COMMANDS
 ## COMMANDS
 
 ### WRITE A NUDGE (one-sentence, to steer the front agent)
-cat > $PID_DIR/nudge.md <<'NUDGE'
+cat > $MONITOR_DIR/nudge.md <<'NUDGE'
 <your one-sentence nudge, referencing specific evidence>
 NUDGE
 
 ### APPEND TO SESSION.MD (required each wake — your running judgment)
-cat >> $PID_DIR/session.md <<'JUDGMENT'
+cat >> $MONITOR_DIR/session.md <<'JUDGMENT'
 ## Wake <N> — <short title>
 <brief state: what's happening, what pattern you see or don't, nudge Y/N and why>
 JUDGMENT
 
 ### WAIT FOR NEXT TURN (block until agent hits stop_reason=end_turn)
-python3 $MONITOR_DIR/sensor.py $JSONL --wait-once --offset-file $PID_DIR/.offset --trace-file $PID_DIR/trace.md
+python3 $MONITOR_SRC/sensor.py $JSONL --wait-once --offset-file $OFFSET_FILE --trace-file $TRACE_FILE
 
 ---
 

@@ -386,17 +386,11 @@ def main():
         if idx + 1 < len(args):
             pid = int(args[idx + 1])
 
-    offset_file_override = None
+    offset_file = None
     if "--offset-file" in args:
         idx = args.index("--offset-file")
         if idx + 1 < len(args):
-            offset_file_override = Path(args[idx + 1])
-
-    session_id = None
-    if "--session-id" in args:
-        idx = args.index("--session-id")
-        if idx + 1 < len(args):
-            session_id = args[idx + 1]
+            offset_file = Path(args[idx + 1])
 
     trace_file = None
     if "--trace-file" in args:
@@ -405,18 +399,13 @@ def main():
             trace_file = Path(args[idx + 1])
             trace_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Resolve offset file: explicit --offset-file wins; else derive from
-    # --session-id; else error out. No shared default — that corrupts state
-    # across PIDs (T119 Thread 4).
-    if offset_file_override:
-        offset_file = offset_file_override
-    elif session_id:
-        offset_file = Path(__file__).parent / "pids" / session_id / ".offset"
-        offset_file.parent.mkdir(parents=True, exist_ok=True)
-    else:
+    # Caller must always pass --offset-file explicitly. Dropping the old
+    # --session-id fallback (which wrote into pids/<id>/.offset under the
+    # plugin tree) — T121 flat layout: offset lives at MONITOR_DIR/.offset,
+    # bootstrap.sh passes it explicitly on each WAIT command.
+    if offset_file is None:
         print(
-            "Error: must pass either --offset-file <path> or --session-id <id>.\n"
-            "       No shared default is allowed (would corrupt state across PIDs).",
+            "Error: --offset-file <path> is required.",
             file=sys.stderr,
         )
         sys.exit(2)

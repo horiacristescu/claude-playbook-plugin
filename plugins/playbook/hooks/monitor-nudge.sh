@@ -5,11 +5,19 @@
 # Works for both PostToolUse and UserPromptSubmit (reads event name from stdin).
 # Current CC: PostToolUse additionalContext works, UserPromptSubmit is broken (bug #12151).
 #
-# Reads .agent/monitor/pids/$SESSION_ID/nudge.md
-# If non-empty: atomic claim, emit additionalContext, log to chat_log
-# If empty or missing: exit 0 silently (no-op)
+# Reads .agent/monitor/nudge.md (T121 flat layout).
+# If non-empty: atomic claim, emit additionalContext, log to chat_log.
+# If empty or missing: exit 0 silently (no-op).
 
 set -e
+
+# Skip when invoked from the monitor's own claude session — otherwise the
+# monitor's own Bash/Write tool calls would trigger this hook, which would
+# consume the monitor's just-written nudge before the front agent ever sees
+# it. Launch-monitor exports PLAYBOOK_ROLE=monitor specifically for this.
+if [ "${PLAYBOOK_ROLE:-}" = "monitor" ]; then
+    exit 0
+fi
 
 # Find project root (walk up looking for .agent/tasks/)
 find_root() {
@@ -28,7 +36,7 @@ INPUT=$(cat)
 export EVENT_NAME=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read() or '{}').get('hook_event_name','UserPromptSubmit'))" 2>/dev/null || echo "UserPromptSubmit")
 
 SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
-NUDGE_FILE="$PROJECT_DIR/.agent/monitor/pids/$SESSION_ID/nudge.md"
+NUDGE_FILE="$PROJECT_DIR/.agent/monitor/nudge.md"
 
 # No nudge file or empty — silent exit
 [ -f "$NUDGE_FILE" ] || exit 0

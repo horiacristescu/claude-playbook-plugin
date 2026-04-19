@@ -3,7 +3,6 @@
 #
 # Usage:
 #   monitor start [--session-id ID]     launch monitor as a sandboxed claude session
-#   monitor merge                       review + apply pending proposals
 #   monitor --help                      this help
 #
 # Invoked via the target project's .claude/bin/monitor wrapper, which locates
@@ -27,13 +26,7 @@ Usage: monitor <subcommand> [options]
 Subcommands:
   start [--session-id ID]    Launch the monitor as a sandboxed claude session
                              watching the front agent identified by SESSION_ID.
-                             Defaults to \$PLAYBOOK_SESSION_ID if unset.
-
-  merge                      Review and apply pending monitor proposals.
-                             Scans pids/*/rules.propose.md and
-                             pids/*/mindmap.propose.md, prompts y/N/q per
-                             proposal, appends accepted ones to
-                             .agent/monitor/{rules.md, MONITOR_MIND_MAP.md}.
+                             Auto-detects oldest alive pid if unset.
 
   --help, -h, help           Show this help.
 EOF
@@ -45,9 +38,6 @@ shift || true
 case "$SUB" in
     start)
         exec "$LIB_DIR/launch-monitor" "$@"
-        ;;
-    merge)
-        exec "$LIB_DIR/merge-proposals" "$@"
         ;;
     --help|-h|help|"")
         usage
