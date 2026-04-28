@@ -483,6 +483,7 @@ Tasks CLI:
     tasks panel-review [<N>]   multi-model judge panel; task optional — use --prompt alone for any question, --bare to strip all context
   Analysis:
     tasks retro [--since N]    project retrospective
+    tasks global-retro-collect --since DATE ROOT [ROOT...]   collect cross-VM retro archive
     tasks context <N>          extract chat messages for a task
     tasks doctor               harness health check
   Info:
@@ -624,6 +625,8 @@ Commands:
                       --no-mind-map      strip mind map from context
                       --bare             no context at all; --prompt is the entire prompt
   retro [--since N]   Project retrospective
+  global-retro-collect --since DATE [--machine NAME] [--out DIR] [--format zip|tgz] ROOT [ROOT...]
+                      Collect Playbook artifacts for a global retro archive
   context <N>         Extract chat messages for a task
   doctor              Harness health check
   bootstrap           Load mind map + skills + pending tasks
@@ -640,6 +643,7 @@ Examples:
   tasks panel-review 001 --prompt "focus on the title-detection approach"
   tasks panel-review --prompt "which of these two designs is simpler?" --no-mind-map
   tasks panel-review --bare --prompt "read ideas.txt and pick the best story idea"
+  tasks global-retro-collect --since 2026-03-14 ~/Code /data --out /tmp
   tasks list --pending"""
 
 

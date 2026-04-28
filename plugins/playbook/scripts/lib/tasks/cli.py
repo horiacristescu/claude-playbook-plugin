@@ -1535,6 +1535,67 @@ def main():
               f"{len(chatlog)} chat messages, {len(mindmap)} mind map nodes")
         print(f"Next: tasks work {task_num}")
 
+    elif cmd == "global-retro-collect":
+        since = None
+        machine = None
+        out_dir = Path.cwd()
+        archive_format = "zip"
+        roots = []
+        i = 0
+        while i < len(cmd_args):
+            arg = cmd_args[i]
+            if arg == "--since" and i + 1 < len(cmd_args):
+                since = cmd_args[i + 1]
+                i += 2
+            elif arg == "--machine" and i + 1 < len(cmd_args):
+                machine = cmd_args[i + 1]
+                i += 2
+            elif arg == "--out" and i + 1 < len(cmd_args):
+                out_dir = Path(cmd_args[i + 1])
+                i += 2
+            elif arg == "--format" and i + 1 < len(cmd_args):
+                archive_format = cmd_args[i + 1]
+                i += 2
+            elif arg.startswith("--"):
+                print(f"Error: unknown option for global-retro-collect: {arg}", file=sys.stderr)
+                print("Usage: tasks global-retro-collect --since DATE [--machine NAME] [--out DIR] [--format zip|tgz] ROOT [ROOT...]", file=sys.stderr)
+                sys.exit(1)
+            else:
+                roots.append(Path(arg))
+                i += 1
+
+        if since is None:
+            print("Error: global-retro-collect requires --since DATE", file=sys.stderr)
+            print("Usage: tasks global-retro-collect --since DATE [--machine NAME] [--out DIR] [--format zip|tgz] ROOT [ROOT...]", file=sys.stderr)
+            sys.exit(1)
+        if not roots:
+            print("Error: global-retro-collect requires at least one root directory", file=sys.stderr)
+            print("Usage: tasks global-retro-collect --since DATE [--machine NAME] [--out DIR] [--format zip|tgz] ROOT [ROOT...]", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            from tasks.global_retro_collect import collect_global_retro
+            archive_path, manifest = collect_global_retro(
+                roots=roots,
+                since=since,
+                out_dir=out_dir,
+                machine=machine,
+                archive_format=archive_format,
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        kept = sum(1 for project in manifest["projects"] if project["kept"])
+        task_count = sum(len(project["included_tasks"]) for project in manifest["projects"])
+        file_count = sum(len(project["included_files"]) for project in manifest["projects"])
+        print(f"Created: {archive_path}")
+        print(
+            f"Global retro collection: {kept} project(s), "
+            f"{task_count} task(s), {file_count} file(s)"
+        )
+        print("Includes manifest.json and manifest.tsv")
+
     elif cmd == "status":
         project_path = find_project_root()
         task_status(project_path)

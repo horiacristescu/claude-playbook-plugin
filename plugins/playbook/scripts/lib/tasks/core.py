@@ -5,7 +5,7 @@ import os
 import re
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 # Task type → pattern name in playbook skill
 PLAYBOOKS = {
