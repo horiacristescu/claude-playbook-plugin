@@ -17,9 +17,93 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from .policy import _is_code_file_path
+from .policy import _is_code_file_path, _is_management_path
 
 HOOK_TIMEOUT_MS = 5000
+
+
+class ParseResult:
+    """Result of parsing an apply_patch tool_input.command body.
+
+    Two-state output for finding-4 silent-bypass detection:
+      had_headers=False: no apply_patch grammar markers seen — not an edit.
+      had_headers=True, paths=[]: looked like apply_patch but no paths extracted —
+        treat as deny case (refuse without active task) rather than allow,
+        otherwise a malformed/new-shape patch silently bypasses the gate.
+    """
+
+    __slots__ = ("paths", "had_headers")
+
+    def __init__(self, paths: list[str], had_headers: bool):
+        self.paths = paths
+        self.had_headers = had_headers
+
+    def __repr__(self) -> str:
+        return f"ParseResult(paths={self.paths!r}, had_headers={self.had_headers!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ParseResult):
+            return NotImplemented
+        return self.paths == other.paths and self.had_headers == other.had_headers
+
+
+# Tolerate leading whitespace on patch markers — round-tripping through JSON
+# pretty-printers or wrappers can indent the body (panel impl-review #E).
+_PATCH_MARKER_RE = re.compile(r"^\s*\*\*\* ")
+_FILE_HEADER_RE = re.compile(
+    r"^\s*\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$"
+)
+# Codex's rename directive: *** Update File: <old> followed by a *** Move to:
+# (or *** Rename to:) directive on a subsequent line. Capture the destination
+# so a no-task rename non-code → code path is caught (panel impl-review #B).
+_MOVE_TO_RE = re.compile(
+    r"^\s*\*\*\* (?:Move|Rename) to:\s*(.+?)\s*$"
+)
+
+
+def parse_patch_paths(command: str) -> ParseResult:
+    """Extract file paths from an apply_patch command body.
+
+    Recognizes Codex's canonical apply_patch grammar:
+      *** Begin Patch
+      *** Add File: <path>
+      *** Update File: <path>     (may be followed by *** Move to: <new> for renames)
+      *** Delete File: <path>
+      *** End Patch
+
+    Returns ParseResult. Never raises.
+    """
+    if not command:
+        return ParseResult(paths=[], had_headers=False)
+
+    paths: list[str] = []
+    had_headers = False
+
+    for raw_line in command.splitlines():
+        if not _PATCH_MARKER_RE.match(raw_line):
+            continue
+        # Any "*** " line (with optional leading whitespace) signals apply_patch grammar.
+        had_headers = True
+
+        m = _FILE_HEADER_RE.match(raw_line)
+        if m:
+            path = m.group(1).strip()
+            if path:
+                paths.append(path)
+            continue
+
+        m = _MOVE_TO_RE.match(raw_line)
+        if m:
+            dst = m.group(1).strip()
+            if dst:
+                paths.append(dst)
+            continue
+
+        # *** Begin Patch / *** End Patch / unrecognized *** directive:
+        # keeps had_headers=True; contributes no path. If no per-file
+        # headers ever match, paths stays empty → caller treats as deny.
+
+    return ParseResult(paths=paths, had_headers=had_headers)
 MISSING_FILE_DIGEST = "__MISSING__"
 SESSION_BASELINE_KEY = "__session__"
 _CHAT_LOG_HEADER = "# Project Chat Log\n\nUser messages logged with timestamps.\n\n"
@@ -124,8 +208,13 @@ def _command_for(script_name: str) -> str:
     return f"python3 {shlex.quote(str(script_path))}"
 
 
-def _playbook_hook_entry(script_name: str) -> dict:
-    return {
+def _playbook_hook_entry(script_name: str, matcher: str | None = None) -> dict:
+    """Build a hooks.json entry. When `matcher` is given (e.g. "^apply_patch$"),
+    Codex scopes the hook to tools whose name matches the regex. Omitting the
+    matcher = match-all (UserPromptSubmit / Stop don't need a matcher because
+    the event itself is already a single-purpose trigger).
+    """
+    entry: dict = {
         "hooks": [
             {
                 "type": "command",
@@ -134,10 +223,18 @@ def _playbook_hook_entry(script_name: str) -> dict:
             }
         ]
     }
+    if matcher is not None:
+        entry["matcher"] = matcher
+    return entry
 
 
 def render_playbook_hooks() -> dict:
-    """Return the Playbook-owned Codex hooks.json fragment."""
+    """Return the Playbook-owned Codex hooks.json fragment.
+
+    PreToolUse and PostToolUse are scoped to apply_patch only via a `matcher`
+    so they don't fire on every Bash call (which would generate noise and
+    pay overhead on tool-types we don't gate today).
+    """
     return {
         "hooks": {
             "UserPromptSubmit": [
@@ -146,46 +243,105 @@ def render_playbook_hooks() -> dict:
             "Stop": [
                 _playbook_hook_entry("codex-stop-hook"),
             ],
+            "PreToolUse": [
+                _playbook_hook_entry("codex-apply-patch-hook", matcher="^apply_patch$"),
+            ],
+            "PostToolUse": [
+                _playbook_hook_entry("codex-apply-patch-hook", matcher="^apply_patch$"),
+            ],
         }
     }
 
 
+def _entry_commands(entry: dict) -> set[str]:
+    """Return the set of `command` strings inside an entry's `hooks` array."""
+    return {
+        hook.get("command", "")
+        for hook in entry.get("hooks", [])
+        if isinstance(hook, dict)
+    }
+
+
+def _existing_commands_for_matcher(event_entries: list, matcher: str) -> set[str]:
+    """All command strings already registered under the given matcher value."""
+    seen: set[str] = set()
+    for entry in event_entries:
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("matcher") or "") != matcher:
+            continue
+        seen |= _entry_commands(entry)
+    return seen
+
+
 def merge_hooks(existing: dict, additions: dict) -> dict:
-    """Merge Playbook hook entries into an existing hooks.json document."""
+    """Merge Playbook hook entries into an existing hooks.json document.
+
+    Dedup key is `(matcher, individual_command)` per event name (panel
+    impl-review #H — codex #3): if the user has an existing entry under
+    the same matcher containing the Playbook command plus a custom hook,
+    re-installing must NOT add a second Playbook entry for that matcher.
+    Different matchers under the same event coexist (panel finding A
+    earlier — `^Bash$` linter vs `^apply_patch$` Playbook hook).
+    """
     merged = json.loads(json.dumps(existing or {}))
-    hooks = merged.setdefault("hooks", {})
+    if not isinstance(merged.get("hooks"), dict):
+        merged["hooks"] = {}
+    hooks = merged["hooks"]
 
     for event_name, new_entries in additions.get("hooks", {}).items():
         event_entries = hooks.setdefault(event_name, [])
-        existing_commands = {
-            hook.get("command")
-            for entry in event_entries
-            for hook in entry.get("hooks", [])
-            if isinstance(hook, dict)
-        }
         for entry in new_entries:
-            commands = [
-                hook.get("command")
-                for hook in entry.get("hooks", [])
-                if isinstance(hook, dict)
-            ]
-            if any(command in existing_commands for command in commands):
+            matcher = entry.get("matcher") or ""
+            new_commands = _entry_commands(entry)
+            existing_for_matcher = _existing_commands_for_matcher(event_entries, matcher)
+            # Skip if every command in the new entry is already registered
+            # under this matcher (idempotent re-install).
+            if new_commands and new_commands.issubset(existing_for_matcher):
                 continue
             event_entries.append(entry)
     return merged
 
 
 def install_project_hooks(project_root: Path) -> Path:
-    """Write or merge repo-local .codex/hooks.json for Playbook."""
+    """Write or merge repo-local .codex/hooks.json for Playbook.
+
+    Defensive against pre-existing files that are empty (`touch`-created),
+    contain invalid JSON (hand-edited and broken), or have `"hooks"` set to
+    null/non-dict (panel impl-review #D, gemini-3.1 #4/#5). On any of those,
+    back up the broken file as `hooks.json.broken-<timestamp>` and start fresh
+    rather than crashing or silently overwriting.
+    """
     hooks_dir = project_root / ".codex"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hooks_path = hooks_dir / "hooks.json"
 
-    existing: dict
+    existing: dict = {}
     if hooks_path.exists():
-        existing = json.loads(hooks_path.read_text(encoding="utf-8"))
-    else:
-        existing = {}
+        text = hooks_path.read_text(encoding="utf-8").strip()
+        if text:
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    existing = parsed
+                else:
+                    raise ValueError(f"top-level JSON must be an object, got {type(parsed).__name__}")
+            except (json.JSONDecodeError, ValueError) as exc:
+                # Back up the broken file rather than discarding silently.
+                backup_suffix = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+                backup = hooks_dir / f"hooks.json.broken-{backup_suffix}"
+                backup.write_text(hooks_path.read_text(encoding="utf-8"), encoding="utf-8")
+                print(
+                    f"[codex_hooks] {hooks_path} was unparseable ({exc}); "
+                    f"backed up to {backup} and re-initializing.",
+                    file=__import__("sys").stderr,
+                )
+                existing = {}
+        # else: empty file — treat as fresh install.
+
+    # Defend merge_hooks against `"hooks": null` from a hand-edited file.
+    if not isinstance(existing.get("hooks"), dict):
+        existing = {**existing, "hooks": {}}
 
     merged = merge_hooks(existing, render_playbook_hooks())
     hooks_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
@@ -197,13 +353,229 @@ def current_state_file(project_root: Path, session_id: str) -> Path:
 
 
 def has_active_task(project_root: Path, session_id: str) -> bool:
+    """True iff current_state names a task and its task.md exists.
+
+    The task.md existence check (panel impl-review #J) prevents a split-brain
+    where current_state points at a task whose directory was deleted —
+    apply_patch_pre_decision would allow but apply_patch_post_context would
+    say "no active task", giving the model contradictory signals.
+    """
     state_file = current_state_file(project_root, session_id)
     if not state_file.exists():
         return False
     try:
-        return bool(state_file.read_text(encoding="utf-8").strip())
+        task_num = state_file.read_text(encoding="utf-8").strip()
     except OSError:
         return False
+    if not task_num:
+        return False
+    return _find_task_file(project_root, task_num) is not None
+
+
+def apply_patch_pre_decision(
+    payload: dict,
+    project_root: Path,
+    session_id: str,
+) -> dict | None:
+    """PreToolUse decision for Codex apply_patch.
+
+    Returns None to allow; returns {"decision": "block", "reason": "..."} to deny.
+    The caller (scripts/codex-apply-patch-hook) translates a deny into
+    `print(reason, file=sys.stderr); sys.exit(2)` per W0(e) decision.
+
+    Policy mirrors Claude's `evaluate_tool_call`:
+      - With active task: always allow.
+      - Without active task: deny ONLY for code-file paths under non-management
+        directories. README.md, Dockerfile, .env, etc. are allowed (Claude parity).
+      - Silent-bypass guard: if patch grammar markers were seen but no paths
+        could be parsed, deny with "could not parse" reason (finding 4) — a
+        new/malformed patch shape must not slip through unblocked.
+    """
+    if has_active_task(project_root, session_id):
+        return None
+
+    # Since this hook is matcher-scoped to ^apply_patch$, getting here means
+    # an apply_patch tool call. A missing or non-string command field is a
+    # malformed payload — defensive deny rather than silent allow (panel
+    # impl-review #O). Active-task path above is unaffected.
+    tool_input = payload.get("tool_input")
+    command = None
+    if isinstance(tool_input, dict):
+        cmd = tool_input.get("command")
+        if isinstance(cmd, str):
+            command = cmd
+
+    if command is None:
+        return {
+            "decision": "block",
+            "reason": (
+                "could not read apply_patch payload (missing or non-string "
+                "tool_input.command) — refusing without active task. "
+                "Run `.claude/bin/tasks work <N>` before editing files."
+            ),
+        }
+
+    parsed = parse_patch_paths(command)
+
+    # Not an apply_patch attempt at all (no grammar markers) — allow.
+    if not parsed.had_headers:
+        return None
+
+    # Grammar markers present but no paths extracted — silent-bypass guard.
+    if not parsed.paths:
+        return {
+            "decision": "block",
+            "reason": (
+                "could not parse apply_patch body — refusing without active task. "
+                "Run `.claude/bin/tasks work <N>` before editing files."
+            ),
+        }
+
+    # Filter: keep only code-file paths that are NOT under .agent/ or .claude/.
+    code_paths = [
+        p for p in parsed.paths
+        if _is_code_file_path(p) and not _is_management_path(p)
+    ]
+
+    if not code_paths:
+        # All paths are management dirs or non-code (e.g. README.md, Dockerfile).
+        # Claude-parity: allowed without an active task.
+        return None
+
+    listed = ", ".join(code_paths)
+    return {
+        "decision": "block",
+        "reason": (
+            f"no active task — run `.claude/bin/tasks work <N>` before editing "
+            f"code: {listed}"
+        ),
+    }
+
+
+_GATE_LINE_RE = re.compile(r"^[ \t]*- \[( |x|X)\]\s*(.*)$")
+
+# Freehand-mode trigger. Matches gate text starting with "Freehand" — covers
+# bare "Freehand", "Freehand — work is done", "Freehand debrief — ...", and
+# other discussion-style variants observed in real task.md files. The single
+# exception is "Freehand log" (cleanup gate from `tasks freehand` workflow at
+# cli.py:1620), which must remain a normal blocking gate.
+# Stays in lockstep with the bash case patterns in scripts/state-echo-hook
+# and scripts/stop-hook.
+_FREEHAND_RE = re.compile(r"^Freehand(?! log\b)")
+
+
+def _read_active_task_number(project_root: Path, session_id: str) -> str | None:
+    """Return the active task number (string) from current_state, or None."""
+    state_file = current_state_file(project_root, session_id)
+    if not state_file.exists():
+        return None
+    try:
+        text = state_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def _find_task_file(project_root: Path, task_num: str) -> Path | None:
+    """Locate `.agent/tasks/<task_num>-*/task.md` for the given task number."""
+    tasks_dir = project_root / ".agent" / "tasks"
+    if not tasks_dir.exists():
+        return None
+    prefix = f"{task_num}-"
+    for child in tasks_dir.iterdir():
+        if child.is_dir() and child.name.startswith(prefix):
+            task_file = child / "task.md"
+            if task_file.exists():
+                return task_file
+    return None
+
+
+def _scan_gates(task_file: Path) -> tuple[int, int, str | None]:
+    """Return (done_count, total_count, first_unchecked_text).
+
+    first_unchecked_text is None if all gates are done.
+    """
+    try:
+        lines = task_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0, 0, None
+
+    total = 0
+    done = 0
+    first_unchecked: str | None = None
+    for line in lines:
+        m = _GATE_LINE_RE.match(line)
+        if not m:
+            continue
+        total += 1
+        marker = m.group(1)
+        if marker.lower() == "x":
+            done += 1
+        elif first_unchecked is None:
+            first_unchecked = m.group(2).strip()
+    return done, total, first_unchecked
+
+
+def _format_gate_echo(task_num: str, done: int, total: int, gate_text: str | None) -> str:
+    """Mirror of gate-echo-lib.sh `format_context` (minus the file:line suffix).
+
+    The bash version appends `# Done? Check the box: <rel_path>:<line>`. We omit
+    that for Codex because the agent already has full repo access and the
+    relative-path hint is noise in apply_patch's transcript context.
+    """
+    # Distinguish a stub task (zero gate lines) from a fully-completed task.
+    # Without this branch, total=0 falls through to "all gates done" which is
+    # actively misleading and can trigger session-end actions (impl-review #2).
+    if total == 0:
+        return f"# [{task_num}] no gates defined yet — add work plan before continuing."
+    if gate_text is None:
+        return f"# [{task_num}] — all gates done. Stay for follow-up. Auto-closes on task switch."
+    # Freehand-mode echo when gate text is "Freehand" (bare) or starts with
+    # "Freehand <punctuation>..." (e.g. "Freehand — work is done"). Must NOT
+    # match "Freehand log" — alphanumeric continuations are normal gates
+    # (cli.py:1620 cleanup gate). Pattern stays in lockstep with bash sites.
+    if _FREEHAND_RE.match(gate_text or ""):
+        return f"# [{task_num}] Freehand mode — wait for user instructions. Close only when user says done."
+    return f"# Working on task [{task_num}] gate ({done}/{total}) -> [ ] {gate_text}"
+
+
+def _no_active_task_echo() -> str:
+    return "# No active task (.claude/bin/tasks work <N> to activate)"
+
+
+def apply_patch_post_context(
+    payload: dict,
+    project_root: Path,
+    session_id: str,
+) -> dict:
+    """PostToolUse handler for Codex apply_patch.
+
+    Emits the same first-unchecked-gate echo Claude's `state-echo-hook` produces
+    (W3 minimum-viable scope: gate text + no-task / all-done fallback + freehand
+    suppression). Stateful behaviors (counters, transition logs, typed nudges,
+    write log) are parked — see task 123 W3 / parked items.
+
+    Return shape matches Codex's `hookSpecificOutput.additionalContext` contract;
+    text is injected as a developer-role message in the next turn (verified in W0(d)).
+    """
+    task_num = _read_active_task_number(project_root, session_id)
+
+    if task_num is None:
+        context = _no_active_task_echo()
+    else:
+        task_file = _find_task_file(project_root, task_num)
+        if task_file is None:
+            context = _no_active_task_echo()
+        else:
+            done, total, first_unchecked = _scan_gates(task_file)
+            context = _format_gate_echo(task_num, done, total, first_unchecked)
+
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": context,
+        }
+    }
 
 
 def _baseline_key(turn_id: str | None) -> str:

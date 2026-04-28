@@ -86,10 +86,20 @@ fi
 # Find first unchecked gate for the message
 FIRST_GATE=$(grep -m1 -E '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null | sed 's/^[[:space:]]*- \[ \] *//')
 
-# Freehand mode: don't block when current gate is Freehand
-if [ "$FIRST_GATE" = "Freehand" ]; then
-    exit 0
-fi
+# Freehand mode: don't block when the gate text starts with "Freehand" —
+# covers "Freehand", "Freehand — work is done", "Freehand debrief — ...",
+# and discussion-style variants observed in real task.md files. The single
+# exception is "Freehand log" (cleanup gate at cli.py:1620), which must
+# still block so its work runs before close.
+# Pattern stays in lockstep with scripts/state-echo-hook and src/provider/codex_hooks.py.
+case "$FIRST_GATE" in
+    "Freehand log"|"Freehand log"[!a-zA-Z0-9_]*)
+        : # cleanup gate — keep blocking
+        ;;
+    Freehand*)
+        exit 0
+        ;;
+esac
 
 cat >&2 <<MSG
 BLOCKED: ${UNCHECKED} unchecked gate(s) in task ${TASK}.

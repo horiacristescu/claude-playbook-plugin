@@ -173,11 +173,27 @@ while IFS= read -r line; do
     break
 done < <(grep -nE '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null)
 
-# Freehand mode: suppress drift counter and gate pressure when current gate is exactly "Freehand"
+# Freehand mode: suppress drift counter and gate pressure when the gate text
+# starts with "Freehand" — covers "Freehand", "Freehand — work is done",
+# "Freehand debrief — ...", and other discussion-style variants observed in
+# real task.md files. The single exception is "Freehand log" (the cleanup
+# gate inserted by `tasks freehand` workflow at cli.py:1620), which must
+# remain a normal blocking gate so its work runs before close.
+# Pattern stays in lockstep with scripts/stop-hook and src/provider/codex_hooks.py.
 IS_FREEHAND=false
-if [ "$GATE_TEXT" = "Freehand" ]; then
-    IS_FREEHAND=true
-fi
+# Match `Freehand log` followed by ANY non-word char (or end of string) — exact
+# Python regex `\b` semantics (impl-review F2/F5). Earlier 8-alternative list
+# enumerated only space/em-dash/en-dash/hyphen/colon/period/comma; `Freehand log!`
+# slipped past the bash exclusions but was caught by the Python `\b` matcher,
+# producing exact-divergence the lockstep was meant to prevent.
+case "$GATE_TEXT" in
+    "Freehand log"|"Freehand log"[!a-zA-Z0-9_]*)
+        : # cleanup gate — NOT freehand-mode
+        ;;
+    Freehand*)
+        IS_FREEHAND=true
+        ;;
+esac
 
 # Make path relative to project
 REL_PATH="${TASK_FILE#$PROJECT_DIR/}"

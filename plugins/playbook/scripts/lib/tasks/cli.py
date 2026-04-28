@@ -235,6 +235,33 @@ def _gc_dead_sessions(project_path: Path) -> None:
         shutil.rmtree(session_dir, ignore_errors=True)
 
 
+def _panel_triage_frame() -> list[str]:
+    """Return the lines to append to a panel-review judge.md so the reading
+    agent meets the triage discipline alongside the findings.
+
+    Same wording for plan and impl modes (the panel-review assembly is shared);
+    mirrors the per-task pushback gate from `template.judge_section()` /
+    `template.judge_impl_section()` but lives in the file the agent actually
+    reads after the panel runs.
+    """
+    bar = "═" * 60
+    return [
+        bar,
+        "## Triage",  # No indent — must match `^## ` line-start parsers (impl-review F4).
+        bar + "\n",
+        (
+            "These findings are opinion, not gospel. Before applying any of "
+            "them, decide per-finding: real correctness issue, speculative "
+            "concern, or wrong call. Document accept (with rationale) / park "
+            "(with rationale) / reject (with rationale). Verify file:line "
+            "claims before applying — panel judges sometimes cite wrong "
+            "locations. The panel doesn't live with the outcomes — you do. "
+            "Push back where you have concrete evidence the panel doesn't."
+        ),
+        "",
+    ]
+
+
 def print_usage():
     from tasks.template import usage_text
     print(usage_text())
@@ -884,6 +911,15 @@ def main():
         display_label = task_path or extra_prompt[:60]
         lines = [f"# Panel {review_label.title()} — {display_label}\n"]
         lines.append(f"**Judges:** {len(results)} | **Web search:** {'yes' if web_search else 'no'} | **Timeout:** {timeout_secs}s\n\n")
+        # Triage frame (T124): prepend the pushback discipline AT THE TOP so
+        # the reading agent meets the instruction BEFORE the per-judge
+        # findings — primes the triage lens before the data is read.
+        # The judges themselves never see this; it's bundled with their
+        # outputs purely for the reading agent. Mirrors the in-task pushback
+        # gate from template.judge_section / judge_impl_section, but for
+        # panel reviews (where findings live in judge.md, not task.md) the
+        # discipline rides with the data. Helper is unit-tested in tests/test_cli.py.
+        lines.extend(_panel_triage_frame())
         for label in sorted(results.keys()):
             lines.append("═" * 60)
             lines.append(f"  JUDGE: {label}")
