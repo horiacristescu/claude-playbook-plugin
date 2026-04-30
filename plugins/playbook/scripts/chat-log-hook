@@ -179,7 +179,7 @@ fi
 MSG_ID=$(get_next_id "$COUNTER_FILE")
 
 # Session ID (needed for PID tag in chat log and counter reset)
-SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
+SESSION_ID="$(resolve_session_id)"
 SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
 
 # Append to local chat log with message ID and PID tag

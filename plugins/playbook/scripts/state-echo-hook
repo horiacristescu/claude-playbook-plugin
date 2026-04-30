@@ -97,7 +97,7 @@ fi
 
 # Read stdin (PostToolUse JSON)
 INPUT=$(cat)
-SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
+SESSION_ID="$(resolve_session_id)"
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_name',''))" 2>/dev/null || echo "")
 
 # --- Eval mode: read config flags if PLAYBOOK_EVAL_CONFIG is set ---

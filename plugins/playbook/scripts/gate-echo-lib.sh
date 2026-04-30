@@ -24,6 +24,52 @@ find_project_root() {
     return 0  # "not found" communicated via empty output, not exit code (set -e safe)
 }
 
+# find_agent_root_pid
+# Walk parent process tree. Output PID of the highest ancestor whose
+# `comm` is claude/codex/gemini, or empty if none found within 20 hops.
+# Mirrors `find_agent_root_pid()` in src/tasks/core.py — both walk the
+# same `ps` tree and converge on the same PID. Used as fallback when
+# PLAYBOOK_SESSION_ID env var isn't propagated.
+find_agent_root_pid() {
+    local pid=$PPID
+    local last_agent=""
+    local count=0
+    local info ppid comm
+    while [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "1" ] && [ "$count" -lt 20 ]; do
+        info=$(ps -p "$pid" -o ppid=,comm= 2>/dev/null) || break
+        [ -z "$info" ] && break
+        ppid=$(echo "$info" | awk '{print $1}')
+        comm=$(echo "$info" | awk '{$1=""; sub(/^ +/, ""); print}')
+        comm="${comm##*/}"  # parameter expansion: strip path; safe for "-zsh" (basename would error)
+        case "$comm" in
+            claude|codex|gemini) last_agent=$pid ;;
+        esac
+        [ "$ppid" = "$pid" ] && break
+        pid=$ppid
+        count=$((count + 1))
+    done
+    echo "$last_agent"
+}
+
+# resolve_session_id
+# Returns the session_id used to namespace .agent/sessions/<id>/.
+# Order: PLAYBOOK_SESSION_ID env → ancestor scan (root agent PID) →
+# immediate-parent PID. Mirrors resolve_session_id() in src/tasks/core.py
+# — Python and bash converge on the same value when env var is unset.
+resolve_session_id() {
+    if [ -n "${PLAYBOOK_SESSION_ID:-}" ]; then
+        echo "$PLAYBOOK_SESSION_ID"
+        return 0
+    fi
+    local agent_pid
+    agent_pid=$(find_agent_root_pid)
+    if [ -n "$agent_pid" ]; then
+        echo "pid-$agent_pid"
+    else
+        echo "pid-$PPID"
+    fi
+}
+
 # agent_dir_writable PROJECT_DIR
 # Returns 0 if .agent/ exists and is writable, 1 otherwise.
 # Use this before any hook that writes to .agent/ — in sandbox mode

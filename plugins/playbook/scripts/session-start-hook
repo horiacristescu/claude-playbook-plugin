@@ -23,11 +23,12 @@ fi
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$HOOK_DIR/gate-echo-lib.sh"
 
-# Use PID-based session ID: pid-<PPID> (the agent process).
-# PPID is stable for the session lifetime and allows instant GC via kill -0.
-# We ignore the UUID from CC runtime stdin — PIDs are simpler and verifiable.
+# Use PID-based session ID via resolve_session_id (gate-echo-lib.sh).
+# Walks process tree, finds claude/codex/gemini ancestor, uses pid-<that>.
+# Same value as pid-$PPID at session-start (claude is direct parent), but
+# consistent with all other hooks — no drift risk.
 INPUT=$(cat)
-SESSION_ID="pid-$PPID"
+SESSION_ID="$(resolve_session_id)"
 
 # Write to CLAUDE_ENV_FILE so it persists for all Bash calls this session
 if [ -n "$CLAUDE_ENV_FILE" ]; then

@@ -78,8 +78,8 @@ fi
 # Read stdin (PreToolUse JSON)
 INPUT=$(cat)
 
-# Session ID: env var (set by session-start-hook) or pid-$PPID fallback
-SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
+# Session ID: env var → ancestor-scan → pid-$PPID (see gate-echo-lib.sh::resolve_session_id)
+SESSION_ID="$(resolve_session_id)"
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
 
 SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"

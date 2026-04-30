@@ -102,6 +102,8 @@ case "$(uname -s)" in
         (require-not (subpath \"/var/folders\"))
         (require-not (subpath \"/private/var/folders\"))
         (require-not (regex #\"^$HOME_DIR/\\.claude\"))
+        (require-not (subpath \"$HOME_DIR/.codex\"))
+        (require-not (subpath \"$HOME_DIR/.gemini\"))
         (require-not (subpath \"$HOME_DIR/.cache\"))
         (require-not (subpath \"$HOME_DIR/.local\"))
         (require-not (subpath \"$HOME_DIR/Library\"))

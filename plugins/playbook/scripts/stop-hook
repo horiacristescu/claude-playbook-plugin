@@ -30,7 +30,7 @@ fi
 # Read stdin (Stop JSON) — extract stop_hook_active
 INPUT=$(cat)
 STOP_ACTIVE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('stop_hook_active', False))" 2>/dev/null || echo "False")
-SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
+SESSION_ID="$(resolve_session_id)"
 
 # Safety valve: if already blocked once, allow stopping to prevent loops
 if [ "$STOP_ACTIVE" = "True" ]; then

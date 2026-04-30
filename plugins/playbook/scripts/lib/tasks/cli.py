@@ -6,12 +6,12 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_playbook_skill
+from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_playbook_skill, resolve_session_id
 
 
 def _state_file(project_path: Path) -> Path:
     """Return per-session state file under .agent/sessions/<id>/current_state."""
-    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+    session_id = resolve_session_id()
     state_dir = project_path / ".agent" / "sessions" / session_id
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir / "current_state"
@@ -299,7 +299,7 @@ def main():
         # Handle 'tasks work done' - deactivate current task and set Status in task.md
         if task_num == "done":
             agent_dir = project_path / ".agent"
-            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+            session_id = resolve_session_id()
             session_state = agent_dir / "sessions" / session_id / "current_state"
 
             # Find the active task from session state file
@@ -369,7 +369,7 @@ def main():
         # Auto-close previous task if all gates are checked
         agent_dir = project_path / ".agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+        session_id = resolve_session_id()
         session_dir = agent_dir / "sessions" / session_id
         session_state = session_dir / "current_state"
         prev_task = None
@@ -1722,7 +1722,7 @@ def main():
                 encoding="utf-8",
             )
             # Activate it
-            session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+            session_id = resolve_session_id()
             session_dir = agent_dir / "sessions" / session_id
             session_dir.mkdir(parents=True, exist_ok=True)
             (session_dir / "current_state").write_text(f"{task_num}\n", encoding="utf-8")
@@ -1923,6 +1923,35 @@ def main():
                 break
         check("hooks: gate text truncation", has_truncation,
               "prevents recursive duplication" if has_truncation else "gate text may grow unbounded")
+
+        # 9. Session-id resolver consistency (split-brain regression guard).
+        # Python and bash must produce identical session_ids without PLAYBOOK_SESSION_ID,
+        # otherwise hooks and CLI look in different .agent/sessions/ directories.
+        gate_lib = None
+        for hd in hooks_dirs + [project_path / "scripts"]:
+            cand = hd / "gate-echo-lib.sh"
+            if cand.exists():
+                gate_lib = cand
+                break
+        if gate_lib:
+            import subprocess as _sub
+            from tasks.core import find_agent_root_pid
+            saved = os.environ.pop("PLAYBOOK_SESSION_ID", None)
+            try:
+                find_agent_root_pid.cache_clear()
+                py_sid = resolve_session_id()
+                env = {k: v for k, v in os.environ.items() if k != "PLAYBOOK_SESSION_ID"}
+                r = _sub.run(["bash", "-c", f"source {gate_lib} && resolve_session_id"],
+                             capture_output=True, text=True, env=env, timeout=5)
+                bash_sid = r.stdout.strip()
+            finally:
+                if saved is not None:
+                    os.environ["PLAYBOOK_SESSION_ID"] = saved
+            agree = py_sid == bash_sid and py_sid.startswith("pid-")
+            detail = f"both → {py_sid}" if agree else f"MISMATCH py={py_sid!r} bash={bash_sid!r}"
+            check("session-id: Python ≡ bash resolver", agree, detail)
+        else:
+            check("session-id: Python ≡ bash resolver", False, "gate-echo-lib.sh not found")
 
         # Summary
         total = passed + failed

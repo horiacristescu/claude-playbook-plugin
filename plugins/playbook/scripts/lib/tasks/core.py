@@ -1,11 +1,72 @@
 """Task management operations for .agent/tasks/ directories."""
 from __future__ import annotations
 
+import functools
 import os
 import re
+import subprocess
 from pathlib import Path
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
+
+AGENT_PROCESS_NAMES = frozenset({"claude", "codex", "gemini"})
+
+
+@functools.lru_cache(maxsize=1)
+def find_agent_root_pid() -> int | None:
+    """Walk parent process tree, return PID of the highest agent ancestor.
+
+    Identifies claude/codex/gemini processes by `comm` (basename, no args).
+    Returns None if no agent found within 20 hops or if `ps` is unavailable.
+    Used as fallback when PLAYBOOK_SESSION_ID env var isn't propagated —
+    Python and bash both walk the same tree and converge on the same PID.
+    Result is cached: process tree is stable for the lifetime of this process.
+    """
+    pid = os.getppid()
+    last_agent_pid: int | None = None
+    for _ in range(20):
+        if pid in (0, 1):
+            break
+        try:
+            r = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "ppid=,comm="],
+                capture_output=True, text=True, timeout=1,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            break
+        if r.returncode != 0 or not r.stdout.strip():
+            break
+        parts = r.stdout.strip().split(None, 1)
+        if len(parts) < 2:
+            break
+        try:
+            ppid = int(parts[0])
+        except ValueError:
+            break
+        comm = os.path.basename(parts[1].strip())
+        if comm in AGENT_PROCESS_NAMES:
+            last_agent_pid = pid
+        if ppid == pid:
+            break
+        pid = ppid
+    return last_agent_pid
+
+
+def resolve_session_id() -> str:
+    """Resolve session_id used to namespace .agent/sessions/<id>/.
+
+    Order: PLAYBOOK_SESSION_ID env → ancestor scan (root agent PID) →
+    immediate-parent PID. The ancestor scan is the robust path: it survives
+    env-propagation failures (VSCode CLAUDE_ENV_FILE quirks, missing wrappers,
+    subprocess loss). Bash hooks mirror this resolver in gate-echo-lib.sh.
+    """
+    sid = os.environ.get("PLAYBOOK_SESSION_ID", "")
+    if sid:
+        return sid
+    agent_pid = find_agent_root_pid()
+    if agent_pid is not None:
+        return f"pid-{agent_pid}"
+    return f"pid-{os.getppid()}"
 
 # Task type → pattern name in playbook skill
 PLAYBOOKS = {
@@ -285,7 +346,7 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
     task_file = None
 
     agent_dir = project_path / ".agent"
-    session_id = os.environ.get("PLAYBOOK_SESSION_ID", "") or "default"
+    session_id = resolve_session_id()
     state_files = [agent_dir / "sessions" / session_id / "current_state"]
 
     for state_file in state_files:
