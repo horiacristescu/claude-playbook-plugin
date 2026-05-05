@@ -2,7 +2,7 @@
 
 A Claude Code plugin for building software you can trust. The agent remembers your project across sessions, works in small reviewed tasks, and tests as it builds.
 
-→ [Slide deck](docs/Playbook.pdf) — where Playbook fits among current coding agent harnesses (April 2026).
+→ [Slide deck](https://horiacristescu.github.io/claude-playbook-plugin/docs/Playbook.pdf) — where Playbook fits among current coding agent harnesses (April 2026).
 
 ## What it looks like
 
