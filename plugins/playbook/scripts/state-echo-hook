@@ -169,7 +169,7 @@ while IFS= read -r line; do
     LINENO_PART="${line%%:*}"
     CONTENT="${line#*:}"
     GATE_LINE="$LINENO_PART"
-    GATE_TEXT=$(echo "$CONTENT" | sed 's/^[[:space:]]*- \[ \] *//')
+    GATE_TEXT=$(echo "$CONTENT" | sed 's/^[[:space:]]*- \[ \] *//' | cut -c 1-200)
     break
 done < <(grep -nE '^[[:space:]]*- \[ \]' "$TASK_FILE" 2>/dev/null)
 
