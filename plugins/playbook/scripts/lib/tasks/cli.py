@@ -1830,7 +1830,7 @@ def main():
               f"stale: {', '.join(stale)}" if stale else "clean")
 
         # 4. Hooks — check .claude/hooks/ (installed) or src/hooks/ (dev repo)
-        hooks_dirs = [project_path / ".claude" / "hooks", project_path / "src" / "hooks"]
+        hooks_dirs = [project_path / "scripts", project_path / ".claude" / "hooks", project_path / "src" / "hooks"]
         for hook_name in ["state-echo-hook", "task-gate-hook"]:
             found = False
             for hooks_dir in hooks_dirs:
