@@ -30,11 +30,18 @@ Read `MIND_MAP.md` at project root before starting any work. It's the project's 
 
 ## Task Lifecycle
 
-1. `.claude/bin/tasks new <type> <name>` — creates `.agent/tasks/NNN-name/task.md` from the base template
-2. `.claude/bin/tasks work <N>` — activates the task, hooks start enforcing
-3. Work through task.md gates: Design Phase (understand, structure, verify) → Work Plan (build/investigate gates) → Pre-review
-4. Check each gate's checkbox as you complete it, appending your observations on the same line
-5. `.claude/bin/tasks work done` — deactivates the task, sets status to done
+These are **your** commands to run — the user never calls the tasks CLI.
+
+When the user asks you to do something: run `tasks new` then immediately `tasks work <N>` — never leave a task created but unactivated.
+
+```
+tasks new <type> <name> [intent]   # creates task.md — then immediately:
+tasks work <N>                     # activate it — hooks start enforcing
+```
+
+Work through task.md gates: Design Phase (understand, structure, verify) → Work Plan (build/investigate gates) → Pre-review. Check each gate's checkbox as you complete it, appending your observations on the same line.
+
+When done: `tasks work done` — deactivates the task, sets status to done.
 
 The task.md **is** the execution trace. Never skip checkboxes. Never backfill. One gate at a time.
 
