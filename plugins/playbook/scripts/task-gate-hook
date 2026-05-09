@@ -226,13 +226,11 @@ Code edits require an active task so work is tracked and directed.
 
 Workflow:
   1. .claude/bin/tasks new <type> <name>   — create task
-  2. Read /playbook, adapt task.md gates to the requirements
-  3. Ask the user before activating — don't run .claude/bin/tasks work <N> on your own
-  4. .claude/bin/tasks work <N>            — activate (hook starts tracking gates)
-  5. ... do the work ...
-  6. .claude/bin/tasks work done           — deactivate when finished
+  2. .claude/bin/tasks work <N>            — activate immediately (don't wait)
+  3. ... do the work gate by gate ...
+  4. .claude/bin/tasks work done           — deactivate when finished
 
-To resume an existing task:  .claude/bin/tasks work <N> (ask user first)
+To resume an existing task:  .claude/bin/tasks work <N>
 MSG
     exit 2
 fi
