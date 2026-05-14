@@ -7,7 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
-VERSION = "1.2.4"
+VERSION = "1.2.5"
 
 AGENT_PROCESS_NAMES = frozenset({"claude", "codex", "gemini"})
 
@@ -67,6 +67,36 @@ def resolve_session_id() -> str:
     if agent_pid is not None:
         return f"pid-{agent_pid}"
     return f"pid-{os.getppid()}"
+
+_USERNAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+
+
+def _validate_username(name: str) -> None:
+    """Raise SystemExit if name is not a safe directory component."""
+    if not name or name in (".", "..") or not _USERNAME_RE.match(name) or "/" in name:
+        print(
+            f"Error: .agent/current_user contains invalid username {name!r}.\n"
+            "Must be non-empty, start with a letter or digit, and contain only "
+            "letters, digits, hyphens, underscores, and dots (no spaces or slashes).",
+            file=__import__("sys").stderr,
+        )
+        raise SystemExit(1)
+
+
+def resolve_agent_dir(project_path: Path) -> Path:
+    """Return the agent state root for this project.
+
+    Multi-user mode: .agent/current_user exists → .agent/<username>/
+    Legacy mode:     .agent/current_user absent  → .agent/  (unchanged)
+    Invalid content: print error and exit(1).
+    """
+    marker = project_path / ".agent" / "current_user"
+    if not marker.exists():
+        return project_path / ".agent"
+    name = marker.read_text(encoding="utf-8").strip()
+    _validate_username(name)
+    return project_path / ".agent" / name
+
 
 # Task type → pattern name in playbook skill
 PLAYBOOKS = {
@@ -174,14 +204,14 @@ def _load_playbook(task_type: str, project_path: Path | None = None) -> str | No
 
 def _find_custom_playbook(project_path: Path, task_type: str) -> Path | None:
     """Check if a custom playbook template exists in .agent/playbooks/."""
-    playbook = project_path / ".agent" / "playbooks" / f"{task_type}.md"
+    playbook = resolve_agent_dir(project_path) / "playbooks" / f"{task_type}.md"
     return playbook if playbook.exists() else None
 
 
 def list_all_types(project_path: Path) -> list[str]:
     """Return sorted list of all available task types (built-in + custom)."""
     types = set(PLAYBOOKS.keys()) | {"quick"}
-    playbooks_dir = project_path / ".agent" / "playbooks"
+    playbooks_dir = resolve_agent_dir(project_path) / "playbooks"
     if playbooks_dir.exists():
         for f in playbooks_dir.glob("*.md"):
             if f.name != "README.md":
@@ -205,7 +235,7 @@ def create_task(project_path: Path, name: str, task_type: str | None = None,
     Returns:
         Path to the created task.md file
     """
-    tasks_dir = project_path / ".agent" / "tasks"
+    tasks_dir = resolve_agent_dir(project_path) / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
     task_num = _next_task_number(tasks_dir)
@@ -323,7 +353,7 @@ def _find_active_task(project_path: Path, name_filter: str = "") -> Path | None:
 
     If name_filter is given, only match tasks whose folder name contains it.
     """
-    tasks_dir = project_path / ".agent" / "tasks"
+    tasks_dir = resolve_agent_dir(project_path) / "tasks"
     if not tasks_dir.exists():
         return None
     for task_file in sorted(tasks_dir.glob("*/task.md")):
@@ -345,7 +375,7 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
     """
     task_file = None
 
-    agent_dir = project_path / ".agent"
+    agent_dir = resolve_agent_dir(project_path)
     session_id = resolve_session_id()
     state_files = [agent_dir / "sessions" / session_id / "current_state"]
 
@@ -355,7 +385,7 @@ def task_done(project_path: Path, name_filter: str = "") -> dict:
         task_num = state_file.read_text(encoding="utf-8").strip()
         if not task_num:
             continue
-        matches = sorted((project_path / ".agent" / "tasks").glob(f"{task_num}-*/task.md"))
+        matches = sorted((agent_dir / "tasks").glob(f"{task_num}-*/task.md"))
         if not matches:
             continue
         candidate = matches[0]
@@ -428,7 +458,7 @@ def _extract_progress(task_file: Path) -> str:
 
 def list_tasks(project_path: Path, pending_only: bool = False) -> None:
     """List all tasks with their status and intent."""
-    tasks_dir = project_path / ".agent" / "tasks"
+    tasks_dir = resolve_agent_dir(project_path) / "tasks"
 
     if not tasks_dir.exists():
         print("No .agent/tasks/ directory found")
@@ -497,7 +527,7 @@ def list_tasks(project_path: Path, pending_only: bool = False) -> None:
 
 def task_status(project_path: Path) -> None:
     """Show head position (first unchecked gate) for each active task."""
-    tasks_dir = project_path / ".agent" / "tasks"
+    tasks_dir = resolve_agent_dir(project_path) / "tasks"
 
     if not tasks_dir.exists():
         print("No .agent/tasks/ directory found")

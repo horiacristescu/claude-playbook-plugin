@@ -6,13 +6,13 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_playbook_skill, resolve_session_id
+from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_playbook_skill, resolve_session_id, resolve_agent_dir
 
 
 def _state_file(project_path: Path) -> Path:
     """Return per-session state file under .agent/sessions/<id>/current_state."""
     session_id = resolve_session_id()
-    state_dir = project_path / ".agent" / "sessions" / session_id
+    state_dir = resolve_agent_dir(project_path) / "sessions" / session_id
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir / "current_state"
 
@@ -32,7 +32,7 @@ def _capture_recent_chat(project_path: Path, max_messages: int = 10,
     import re
     from datetime import datetime
 
-    chat_log = project_path / ".agent" / "chat_log.md"
+    chat_log = resolve_agent_dir(project_path) / "chat_log.md"
     if not chat_log.exists():
         return []
 
@@ -176,8 +176,14 @@ def find_project_root() -> Path:
     cwd = Path.cwd()
 
     for p in [cwd, *cwd.parents]:
-        if (p / ".agent" / "tasks").exists():
+        agent = p / ".agent"
+        if (agent / "tasks").exists():
             return p
+        # Multi-user layout: .agent/<user>/tasks/
+        if agent.is_dir():
+            for sub in agent.iterdir():
+                if sub.is_dir() and (sub / "tasks").exists():
+                    return p
 
     # Fall back to cwd (create_task will make .agent/tasks/)
     return cwd
@@ -192,7 +198,7 @@ def _gc_dead_sessions(project_path: Path) -> None:
     Legacy flat files (.hook_counters.*, current_state*) in .agent/ root
     are always removed — they're pre-migration artifacts.
     """
-    agent_dir = project_path / ".agent"
+    agent_dir = resolve_agent_dir(project_path)
     sessions_dir = agent_dir / "sessions"
 
     # Clean legacy flat files from pre-migration layout
@@ -298,7 +304,7 @@ def main():
 
         # Handle 'tasks work done' - deactivate current task and set Status in task.md
         if task_num == "done":
-            agent_dir = project_path / ".agent"
+            agent_dir = resolve_agent_dir(project_path)
             session_id = resolve_session_id()
             session_state = agent_dir / "sessions" / session_id / "current_state"
 
@@ -307,7 +313,7 @@ def main():
 
             if prev_task:
                 # Set ## Status to done in task.md
-                tasks_dir = project_path / ".agent" / "tasks"
+                tasks_dir = agent_dir / "tasks"
                 matches = list(tasks_dir.glob(f"{prev_task}-*/task.md"))
                 if matches:
                     task_file = matches[0]
@@ -321,7 +327,7 @@ def main():
                 # PLAYBOOK_SESSION_ID is not set when called from Bash tool, so scan all sessions.
                 # Intentional partial delete: only sessions pointing at prev_task are removed;
                 # sessions for other tasks are left intact.
-                sessions_dir = agent_dir / "sessions"
+                sessions_dir = agent_dir / "sessions"  # agent_dir already resolved above
                 if sessions_dir.exists():
                     for sf in sessions_dir.glob("*/current_state"):
                         try:
@@ -339,7 +345,7 @@ def main():
         from tasks.core import _find_active_task
         task_file = _find_active_task(project_path, task_num)
         if not task_file:
-            tasks_dir = project_path / ".agent" / "tasks"
+            tasks_dir = resolve_agent_dir(project_path) / "tasks"
             matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
             if matches:
                 from tasks.core import _is_done
@@ -367,7 +373,7 @@ def main():
                 sys.exit(1)
 
         # Auto-close previous task if all gates are checked
-        agent_dir = project_path / ".agent"
+        agent_dir = resolve_agent_dir(project_path)
         agent_dir.mkdir(parents=True, exist_ok=True)
         session_id = resolve_session_id()
         session_dir = agent_dir / "sessions" / session_id
@@ -377,7 +383,7 @@ def main():
             prev_task = session_state.read_text(encoding="utf-8").strip()
         if prev_task and prev_task != task_num:
             from tasks.core import _extract_head_position, _extract_status
-            prev_matches = list((project_path / ".agent" / "tasks").glob(f"{prev_task}-*/task.md"))
+            prev_matches = list((agent_dir / "tasks").glob(f"{prev_task}-*/task.md"))
             if prev_matches:
                 prev_file = prev_matches[0]
                 prev_status = _extract_status(prev_file)
@@ -509,7 +515,7 @@ def main():
         num_match = _re.match(r'^(\d{3})-(.+)$', task_name)
         if num_match:
             provided_num = int(num_match.group(1))
-            tasks_dir = project_path / ".agent" / "tasks"
+            tasks_dir = resolve_agent_dir(project_path) / "tasks"
             next_num = _next_task_number(tasks_dir)
             if provided_num == next_num:
                 # Matches next number - strip it (user was explicit)
@@ -583,11 +589,11 @@ def main():
         title = target.name.replace("-", " ").replace("_", " ").title()
         print(f"Initializing project: {target.name}")
 
-        # Create .agent/tasks/
-        tasks_dir = target / ".agent" / "tasks"
+        # Create .agent/tasks/ (or .agent/<user>/tasks/ in multi-user mode)
+        tasks_dir = resolve_agent_dir(target) / "tasks"
         existed = tasks_dir.exists()
         tasks_dir.mkdir(parents=True, exist_ok=True)
-        print(f"  .agent/tasks/  {'exists' if existed else 'created'}")
+        print(f"  {tasks_dir.relative_to(target)}  {'exists' if existed else 'created'}")
 
         # Create MIND_MAP.md
         mind_map = target / "MIND_MAP.md"
@@ -747,7 +753,7 @@ def main():
         task_file = None
         task_path = None
         if task_num:
-            tasks_dir = project_path / ".agent" / "tasks"
+            tasks_dir = resolve_agent_dir(project_path) / "tasks"
             matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
             if not matches:
                 print(f"Task {task_num} not found", file=sys.stderr)
@@ -772,7 +778,7 @@ def main():
                 context_parts.append(f"=== {task_path} ===\n{task_content}")
             else:
                 # Taskless: include recent chat log as project context
-                chat_log = project_path / ".agent" / "chat_log.md"
+                chat_log = resolve_agent_dir(project_path) / "chat_log.md"
                 if chat_log.exists():
                     chat_content = chat_log.read_text(encoding="utf-8")
                     max_chat = MAX_CONTEXT_CHARS // 2
@@ -791,12 +797,13 @@ def main():
             prompt_fn = None
             review_label = "panel"
 
-        # Output path: task dir when task given, .agent/ otherwise
+        # Output path: task dir when task given, agent_dir/ otherwise
         if task_file:
             judge_md = task_file.parent / "judge.md"
         else:
-            (project_path / ".agent").mkdir(exist_ok=True)
-            judge_md = project_path / ".agent" / "judge.md"
+            agent_dir = resolve_agent_dir(project_path)
+            agent_dir.mkdir(exist_ok=True)
+            judge_md = agent_dir / "judge.md"
 
         # Discover available judges
         judges = []
@@ -968,7 +975,7 @@ def main():
         if task_num.isdigit():
             task_num = task_num.zfill(3)
         project_path = find_project_root()
-        tasks_dir = project_path / ".agent" / "tasks"
+        tasks_dir = resolve_agent_dir(project_path) / "tasks"
         matches = list(tasks_dir.glob(f"{task_num}-*/task.md"))
         if not matches:
             print(f"Task {task_num} not found", file=sys.stderr)
@@ -1177,7 +1184,7 @@ def main():
             task_num = task_num.zfill(3)
         project_path = find_project_root()
 
-        chat_log = project_path / ".agent" / "chat_log.md"
+        chat_log = resolve_agent_dir(project_path) / "chat_log.md"
         if not chat_log.exists():
             print("No .agent/chat_log.md found.", file=sys.stderr)
             sys.exit(1)
@@ -1252,7 +1259,7 @@ def main():
 
     elif cmd == "timeline":
         project_path = find_project_root()
-        bash_history = project_path / ".agent" / "bash_history"
+        bash_history = resolve_agent_dir(project_path) / "bash_history"
         if not bash_history.exists():
             print("No .agent/bash_history found.", file=sys.stderr)
             sys.exit(1)
@@ -1277,8 +1284,8 @@ def main():
 
     elif cmd == "tagger":
         project_path = find_project_root()
-        chat_log = project_path / ".agent" / "chat_log.md"
-        bash_history = project_path / ".agent" / "bash_history"
+        chat_log = resolve_agent_dir(project_path) / "chat_log.md"
+        bash_history = resolve_agent_dir(project_path) / "bash_history"
         if not chat_log.exists():
             print("No .agent/chat_log.md found.", file=sys.stderr)
             sys.exit(1)
@@ -1363,8 +1370,8 @@ def main():
     elif cmd == "tag":
         dry_run = "--dry-run" in cmd_args
         project_path = find_project_root()
-        chat_log = project_path / ".agent" / "chat_log.md"
-        bash_history = project_path / ".agent" / "bash_history"
+        chat_log = resolve_agent_dir(project_path) / "chat_log.md"
+        bash_history = resolve_agent_dir(project_path) / "bash_history"
         if not chat_log.exists():
             print("No .agent/chat_log.md found.", file=sys.stderr)
             sys.exit(1)
@@ -1488,9 +1495,9 @@ def main():
             build_task_windows,
         )
 
-        tasks_dir = project_path / ".agent" / "tasks"
-        chatlog_path = project_path / ".agent" / "chat_log.md"
-        bash_history_path = project_path / ".agent" / "bash_history"
+        tasks_dir = resolve_agent_dir(project_path) / "tasks"
+        chatlog_path = resolve_agent_dir(project_path) / "chat_log.md"
+        bash_history_path = resolve_agent_dir(project_path) / "bash_history"
         mindmap_path = project_path / "MIND_MAP.md"
 
         # Extract data
@@ -1519,7 +1526,7 @@ def main():
 
         # Create as a new task
         from tasks.core import _next_task_number, _slugify
-        tasks_dir_path = project_path / ".agent" / "tasks"
+        tasks_dir_path = resolve_agent_dir(project_path) / "tasks"
         task_num = _next_task_number(tasks_dir_path)
         first = tasks[0]["number"]
         last = tasks[-1]["number"]
@@ -1606,7 +1613,7 @@ def main():
 
         if sub == "log":
             # Extract chat_log messages from freehand-start to now into task.md
-            agent_dir = project_path / ".agent"
+            agent_dir = resolve_agent_dir(project_path)
             state_file = _state_file(project_path)
             if not state_file.exists():
                 print("Error: no active task", file=sys.stderr)
@@ -1686,7 +1693,7 @@ def main():
 
         # Main freehand command: insert Freehand block into active task
         state_file = _state_file(project_path)
-        agent_dir = project_path / ".agent"
+        agent_dir = resolve_agent_dir(project_path)
 
         if state_file.exists():
             task_num = state_file.read_text(encoding="utf-8").strip()
@@ -1803,8 +1810,8 @@ def main():
         print("tasks doctor\n")
 
         # 1. Project structure
-        agent_tasks = project_path / ".agent" / "tasks"
-        check("project: .agent/tasks/ exists", agent_tasks.exists())
+        agent_tasks = resolve_agent_dir(project_path) / "tasks"
+        check("project: tasks/ exists", agent_tasks.exists())
         claude_md = project_path / "CLAUDE.md"
         check("project: CLAUDE.md exists", claude_md.exists())
         mind_map = project_path / "MIND_MAP.md"
@@ -1815,7 +1822,7 @@ def main():
         check("unicode: stdout encoding", "utf" in stdout_enc.lower(), stdout_enc)
 
         # 3. Stale session dirs (current_state older than 24h — orphaned from crashed sessions)
-        agent_dir = project_path / ".agent"
+        agent_dir = resolve_agent_dir(project_path)
         stale = []
         sessions_dir = agent_dir / "sessions"
         if sessions_dir.exists():
@@ -2058,7 +2065,7 @@ def main():
     elif cmd == "log":
         import re
         project_path = find_project_root()
-        chat_log = project_path / ".agent" / "chat_log.md"
+        chat_log = resolve_agent_dir(project_path) / "chat_log.md"
         if not chat_log.exists():
             print("Error: .agent/chat_log.md not found", file=sys.stderr)
             sys.exit(1)

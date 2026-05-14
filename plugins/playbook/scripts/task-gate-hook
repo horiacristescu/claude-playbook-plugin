@@ -56,13 +56,15 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+AGENT_DIR=$(resolve_agent_dir "$PROJECT_DIR")
+
 # State file lives in per-session subdirectory; "default" used when no session_id
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/default"
+SESSION_DIR="$AGENT_DIR/sessions/default"
 STATE_FILE="$SESSION_DIR/current_state"
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 
 # CLAUDE.md keyword check — warn if task system exists but CLAUDE.md doesn't mention it
-if [ -d "$PROJECT_DIR/.agent/tasks" ] && [ -f "$CLAUDE_MD" ]; then
+if [ -d "$AGENT_DIR/tasks" ] && [ -f "$CLAUDE_MD" ]; then
     if ! grep -qE 'tasks bootstrap|tasks work' "$CLAUDE_MD" 2>/dev/null; then
         cat >&2 <<'MSG'
 WARNING: CLAUDE.md doesn't mention the task system. Essential commands:
@@ -82,7 +84,7 @@ INPUT=$(cat)
 SESSION_ID="$(resolve_session_id)"
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
 
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+SESSION_DIR="$AGENT_DIR/sessions/$SESSION_ID"
 STATE_FILE="$SESSION_DIR/current_state"
 mkdir -p "$SESSION_DIR"
 
@@ -111,7 +113,7 @@ if [ "$TOOL_NAME" = "Write" ]; then
     FILE_PATH=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
 
     # Check if it's a task.md in .agent/tasks/ that doesn't exist yet
-    if echo "$FILE_PATH" | grep -qE '\.agent/tasks/[^/]+/task\.md$'; then
+    if echo "$FILE_PATH" | grep -qE '\.agent(/[^/]+)?/tasks/[^/]+/task\.md$'; then
         if [ ! -f "$FILE_PATH" ]; then
             cat >&2 <<'MSG'
 BLOCKED: Only `.claude/bin/tasks new` creates task.md files.
@@ -136,7 +138,7 @@ if [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
     fi
 
     # Check if this targets the active task's task.md
-    if [ -f "$STATE_FILE" ] && echo "$FILE_PATH" | grep -qE '\.agent/tasks/[^/]+/task\.md$'; then
+    if [ -f "$STATE_FILE" ] && echo "$FILE_PATH" | grep -qE '\.agent(/[^/]+)?/tasks/[^/]+/task\.md$'; then
         ACTIVE_TASK=$(head -1 "$STATE_FILE" | tr -d '[:space:]')
         if [ -n "$ACTIVE_TASK" ] && echo "$FILE_PATH" | grep -q "/${ACTIVE_TASK}-"; then
             # Count checkbox delta
@@ -259,7 +261,7 @@ MSG
         exit 2
     fi
 
-    if echo "$CMD" | grep -qE 'mkdir.*\.agent/tasks/'; then
+    if echo "$CMD" | grep -qE 'mkdir.*\.agent(/[^/]+)?/tasks/'; then
         cat >&2 <<'MSG'
 BLOCKED: Don't create task directories manually.
 

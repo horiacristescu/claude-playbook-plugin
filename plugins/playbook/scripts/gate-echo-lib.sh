@@ -3,18 +3,31 @@
 # Shared logic for hooks: project root detection + gate parsing.
 
 # find_project_root
-# Walk up from $PWD looking for .agent/tasks/ (the definitive playbook marker).
+# Walk up from $PWD looking for .agent/tasks/ (legacy) or .agent/<user>/tasks/
+# (multi-user) — the definitive playbook marker.
 # CLAUDE.md and MIND_MAP.md alone are NOT sufficient — they exist in non-playbook
 # projects and would cause hooks to fire where they shouldn't.
 # Outputs the project root path, or empty string if not found.
 find_project_root() {
     local dir="$PWD"
     while true; do
+        # Legacy layout
         if [ -d "$dir/.agent/tasks" ]; then
             echo "$dir"
             return 0
         fi
-        local parent=$(dirname "$dir")
+        # Multi-user layout: .agent/<user>/tasks/
+        if [ -d "$dir/.agent" ]; then
+            local sub
+            for sub in "$dir/.agent"/*/; do
+                if [ -d "${sub}tasks" ]; then
+                    echo "$dir"
+                    return 0
+                fi
+            done
+        fi
+        local parent
+        parent=$(dirname "$dir")
         if [ "$parent" = "$dir" ]; then
             break
         fi
@@ -70,12 +83,44 @@ resolve_session_id() {
     fi
 }
 
+# resolve_agent_dir PROJECT_DIR
+# Echoes the agent state directory:
+#   absent .agent/current_user  → PROJECT_DIR/.agent        (legacy)
+#   valid  .agent/current_user  → PROJECT_DIR/.agent/<user> (multi-user)
+#   invalid content             → stderr + exit 1
+resolve_agent_dir() {
+    local project_dir="$1"
+    local marker="$project_dir/.agent/current_user"
+    if [ ! -f "$marker" ]; then
+        echo "$project_dir/.agent"
+        return 0
+    fi
+    local name
+    name=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$marker")
+    # Validate: non-empty, not . or .., no slash, matches [a-zA-Z0-9][a-zA-Z0-9_.-]*
+    if [ -z "$name" ] || [ "$name" = "." ] || [ "$name" = ".." ]; then
+        echo "Error: .agent/current_user contains invalid username '${name}'. Must be non-empty and not . or .." >&2
+        exit 1
+    fi
+    case "$name" in
+        */*) echo "Error: .agent/current_user contains invalid username '${name}'. Slashes not allowed." >&2; exit 1 ;;
+        [a-zA-Z0-9]*) ;;
+        *) echo "Error: .agent/current_user contains invalid username '${name}'. Must start with a letter or digit." >&2; exit 1 ;;
+    esac
+    if ! echo "$name" | grep -qE '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$'; then
+        echo "Error: .agent/current_user contains invalid username '${name}'. Use only letters, digits, hyphens, underscores, dots." >&2
+        exit 1
+    fi
+    echo "$project_dir/.agent/$name"
+}
+
 # agent_dir_writable PROJECT_DIR
-# Returns 0 if .agent/ exists and is writable, 1 otherwise.
+# Returns 0 if the resolved agent dir exists and is writable, 1 otherwise.
 # Use this before any hook that writes to .agent/ — in sandbox mode
 # the directory may exist but be read-only.
 agent_dir_writable() {
-    local agent_dir="$1/.agent"
+    local agent_dir
+    agent_dir=$(resolve_agent_dir "$1")
     [ -d "$agent_dir" ] && [ -w "$agent_dir" ]
 }
 

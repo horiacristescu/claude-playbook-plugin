@@ -29,16 +29,18 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+AGENT_DIR=$(resolve_agent_dir "$PROJECT_DIR")
+
 # Skip logging if .agent/ isn't writable (sandbox mode, non-playbook project)
 if ! agent_dir_writable "$PROJECT_DIR"; then
     exit 0
 fi
 
-LOCAL_LOG="$PROJECT_DIR/.agent/chat_log.md"
-COUNTER_FILE="$PROJECT_DIR/.agent/chat_log_counter"
+LOCAL_LOG="$AGENT_DIR/chat_log.md"
+COUNTER_FILE="$AGENT_DIR/chat_log_counter"
 
-# Create .agent directory if it doesn't exist
-mkdir -p "$PROJECT_DIR/.agent"
+# Create agent directory if it doesn't exist
+mkdir -p "$AGENT_DIR"
 
 # Get next message ID (flock for atomicity where available, plain fallback on macOS)
 get_next_id() {
@@ -180,7 +182,7 @@ MSG_ID=$(get_next_id "$COUNTER_FILE")
 
 # Session ID (needed for PID tag in chat log and counter reset)
 SESSION_ID="$(resolve_session_id)"
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+SESSION_DIR="$AGENT_DIR/sessions/$SESSION_ID"
 
 # Append to local chat log with message ID and PID tag
 echo "---" >> "$LOCAL_LOG"

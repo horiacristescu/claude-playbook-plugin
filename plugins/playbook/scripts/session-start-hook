@@ -38,15 +38,16 @@ fi
 # Auto-provision .claude/bin/ wrappers for playbook projects
 PROJECT_DIR=$(find_project_root)
 if [ -n "$PROJECT_DIR" ]; then
+    AGENT_DIR=$(resolve_agent_dir "$PROJECT_DIR")
     create_wrapper "$PROJECT_DIR" tasks
     create_wrapper "$PROJECT_DIR" sandbox
 
     # Provision session directory for this session
-    SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+    SESSION_DIR="$AGENT_DIR/sessions/$SESSION_ID"
     mkdir -p "$SESSION_DIR"
 
     # GC: sweep stale session dirs from crashed/killed sessions (current_state >24h old)
-    SESSIONS_DIR="$PROJECT_DIR/.agent/sessions"
+    SESSIONS_DIR="$AGENT_DIR/sessions"
     if [ -d "$SESSIONS_DIR" ]; then
         find "$SESSIONS_DIR" -maxdepth 2 -name 'current_state' -mtime +0 \
             -exec dirname {} \; 2>/dev/null | xargs rm -rf 2>/dev/null || true

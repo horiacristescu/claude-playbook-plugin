@@ -23,6 +23,8 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+AGENT_DIR=$(resolve_agent_dir "$PROJECT_DIR")
+
 # Skip cleanup if .agent/ isn't writable (sandbox mode)
 if ! agent_dir_writable "$PROJECT_DIR"; then
     exit 0
@@ -33,7 +35,7 @@ INPUT=$(cat)
 SESSION_ID="${PLAYBOOK_SESSION_ID:-pid-$PPID}"
 
 # Remove entire session directory (state + counters + offset)
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+SESSION_DIR="$AGENT_DIR/sessions/$SESSION_ID"
 rm -rf "$SESSION_DIR"
 
 exit 0

@@ -54,7 +54,7 @@ classify_tool() {
             # Reflect: editing task.md in .agent/tasks/
             local fpath
             fpath=$(echo "$input" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('tool_input',{}).get('file_path',''))" 2>/dev/null || echo "")
-            if echo "$fpath" | grep -q '\.agent/tasks/.*/task\.md'; then
+            if echo "$fpath" | grep -qE '\.agent(/[^/]+)?/tasks/.*/task\.md'; then
                 echo "reflect"
             else
                 echo "execute"
@@ -89,6 +89,8 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+AGENT_DIR=$(resolve_agent_dir "$PROJECT_DIR")
+
 # Check writability for gate echo counter and transition logging
 AGENT_WRITABLE=true
 if ! agent_dir_writable "$PROJECT_DIR"; then
@@ -108,10 +110,10 @@ if [ -n "$PLAYBOOK_EVAL_CONFIG" ] && [ -f "$PLAYBOOK_EVAL_CONFIG" ]; then
     EVAL_NUDGES=$(python3 -c "import sys,json; print(json.loads(open('$PLAYBOOK_EVAL_CONFIG').read()).get('nudges','typed'))" 2>/dev/null || echo "typed")
     echo "⚠ EVAL MODE: gate_echo=${EVAL_GATE_ECHO}, nudges=${EVAL_NUDGES}" >&2
     # Write file-based marker for harness verification (stream-json doesn't capture hook output)
-    echo "gate_echo=${EVAL_GATE_ECHO},nudges=${EVAL_NUDGES}" > "$PROJECT_DIR/.agent/eval-marker" 2>/dev/null || true
+    echo "gate_echo=${EVAL_GATE_ECHO},nudges=${EVAL_NUDGES}" > "$AGENT_DIR/eval-marker" 2>/dev/null || true
 fi
 
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+SESSION_DIR="$AGENT_DIR/sessions/$SESSION_ID"
 mkdir -p "$SESSION_DIR"
 STATE_FILE="$SESSION_DIR/current_state"
 COUNTER_FILE="$SESSION_DIR/counters"
@@ -148,7 +150,7 @@ if [ -z "$TASK" ]; then
 fi
 
 # Find task file matching the task number
-TASK_FILE=$(find "$PROJECT_DIR/.agent/tasks" -maxdepth 2 -name "task.md" -path "*/${TASK}-*/*" 2>/dev/null | head -1)
+TASK_FILE=$(find "$AGENT_DIR/tasks" -maxdepth 2 -name "task.md" -path "*/${TASK}-*/*" 2>/dev/null | head -1)
 
 if [ -z "$TASK_FILE" ]; then
     CONTEXT="# [${TASK}] — task file not found"
@@ -199,7 +201,7 @@ esac
 REL_PATH="${TASK_FILE#$PROJECT_DIR/}"
 
 # Repetition detection + gate transition logging (using consolidated counter file)
-GATE_LOG="$PROJECT_DIR/.agent/chat_log.md"
+GATE_LOG="$AGENT_DIR/chat_log.md"
 TRANSITION_MSG=""
 SKIP_MSG=""
 if [ -n "$GATE_LINE" ] && [ "$IS_FREEHAND" = true ]; then

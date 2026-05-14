@@ -27,6 +27,8 @@ if [ -z "$PROJECT_DIR" ]; then
     exit 0
 fi
 
+AGENT_DIR=$(resolve_agent_dir "$PROJECT_DIR")
+
 # Read stdin (Stop JSON) — extract stop_hook_active
 INPUT=$(cat)
 STOP_ACTIVE=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('stop_hook_active', False))" 2>/dev/null || echo "False")
@@ -45,7 +47,7 @@ if [ -n "$PLAYBOOK_EVAL_CONFIG" ] && [ -f "$PLAYBOOK_EVAL_CONFIG" ]; then
     fi
 fi
 
-SESSION_DIR="$PROJECT_DIR/.agent/sessions/$SESSION_ID"
+SESSION_DIR="$AGENT_DIR/sessions/$SESSION_ID"
 STATE_FILE="$SESSION_DIR/current_state"
 
 # No active task — allow
@@ -59,7 +61,7 @@ if [ -z "$TASK" ]; then
 fi
 
 # Find task file
-TASK_FILE=$(find "$PROJECT_DIR/.agent/tasks" -maxdepth 2 -name "task.md" -path "*/${TASK}-*/*" 2>/dev/null | head -1)
+TASK_FILE=$(find "$AGENT_DIR/tasks" -maxdepth 2 -name "task.md" -path "*/${TASK}-*/*" 2>/dev/null | head -1)
 
 if [ -z "$TASK_FILE" ]; then
     exit 0
