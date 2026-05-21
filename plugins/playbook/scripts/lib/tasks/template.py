@@ -628,6 +628,9 @@ Commands:
   global-retro-collect --since DATE [--machine NAME] [--out DIR] [--format zip|tgz] ROOT [ROOT...]
                       Collect Playbook artifacts for a global retro archive
   context <N>         Extract chat messages for a task
+  prepare-merge [--target <branch>] [--dry-run]
+                      Renumber tasks, re-sequence chat_log, report MIND_MAP collisions
+                      so the branch merges cleanly into target (default: main)
   doctor              Harness health check
   bootstrap           Load mind map + skills + pending tasks
   init                Create CLAUDE.md for this project
