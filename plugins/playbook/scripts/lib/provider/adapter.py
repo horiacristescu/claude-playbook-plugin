@@ -1,12 +1,13 @@
 """
 ProviderAdapter — abstract base class for all provider adapters.
 
-Each concrete adapter (ClaudeAdapter, CodexAdapter, GeminiAdapter) implements
+Each concrete adapter (ClaudeAdapter, CodexAdapter, AntigravityAdapter) implements
 this interface. The policy engine and hook scripts call the interface only —
 never provider-specific code directly.
 
-Integration: spec-only in T111. Concrete adapters are stubs.
-Full implementations and hook wiring are T112+.
+T134 added three CLI-discovery methods to the ABC: binary_name(), panel_variants(),
+run_headless_judge(). These let panel-review iterate registered adapter classes
+without per-provider if/elif branches in cli.py.
 """
 
 from __future__ import annotations
@@ -33,6 +34,44 @@ class ProviderAdapter(ABC):
         7. Hook entry — on_user_message, on_tool_use, on_stop
     """
 
+    # ── 0. CLI identity (class-level) ────────────────────────────────────────
+
+    @classmethod
+    @abstractmethod
+    def binary_name(cls) -> str:
+        """Executable name for shutil.which() lookup (e.g. "claude", "codex", "agy").
+
+        Class-level so panel-review can discover available providers before
+        instantiating any adapter. Returns the basename, not a full path.
+        """
+
+    @classmethod
+    @abstractmethod
+    def panel_variants(cls) -> list[Optional[str]]:
+        """Model variants this provider contributes to multi-judge panel review.
+
+        Each entry is a model variant string, or None to invoke with no model flag
+        (e.g. agy v1.0.2 has no -m flag — uses whatever the UI has set). Returns
+        an empty list if the provider is adapter-supported but panel-ineligible.
+        """
+
+    @abstractmethod
+    def run_headless_judge(
+        self,
+        prompt: str,
+        model: Optional[str],
+        system_context: str,
+        *,
+        web_search: bool,
+        timeout_secs: int,
+    ) -> str:
+        """Single non-interactive judge invocation; returns stdout text.
+
+        Used by panel-review; each adapter assembles its own command line
+        (provider-specific flags, prompt composition, sandbox controls).
+        Raises subprocess.TimeoutExpired on hang; returns "(no output)" if empty.
+        """
+
     # ── 1. Identity ──────────────────────────────────────────────────────────
 
     @property
@@ -42,7 +81,7 @@ class ProviderAdapter(ABC):
 
         Claude: from hook stdin payload (always available).
         Codex:  wrapper-injected UUID, or pid-<N> PID-walk fallback.
-        Gemini: same as Codex fallback strategy.
+        Antigravity (agy): same as Codex fallback strategy (wrapper sets PLAYBOOK_SESSION_ID; PID-walk otherwise).
 
         Must be stable for the entire session lifetime. Different concurrent
         instances of the same provider in the same project must return different IDs.
@@ -65,7 +104,7 @@ class ProviderAdapter(ABC):
 
         Claude: "CLAUDE.md"  (exists today)
         Codex:  "AGENTS.md"  (missing today — created by install_bootstrap)
-        Gemini: "GEMINI.md"  (missing today — speculative, unverified)
+        Antigravity (agy): "GEMINI.md"  (auto-read from project cwd; mirrors ~/.gemini/GEMINI.md user scope)
         """
 
     @abstractmethod
@@ -75,7 +114,7 @@ class ProviderAdapter(ABC):
         Idempotent — safe to re-run. Called by `tasks init`.
         Claude: no-op (CLAUDE.md is managed separately).
         Codex:  writes AGENTS.md teaching task discipline and .claude/bin/tasks.
-        Gemini: writes GEMINI.md stub (advisory only until hook model confirmed).
+        Antigravity (agy): writes GEMINI.md teaching the Playbook workflow.
         """
 
     # ── 3. Hooks ─────────────────────────────────────────────────────────────
@@ -86,7 +125,8 @@ class ProviderAdapter(ABC):
 
         Claude: writes hooks entries to .claude/settings.json.
         Codex:  enables codex_hooks globally and writes repo-local .codex/hooks.json.
-        Gemini: writes .gemini/hooks.json (unverified format — stub only).
+        Antigravity (agy): writes a global plugin manifest via `agy plugin install`
+            with Claude-compatible hooks/hooks.json.
         """
 
     @abstractmethod
@@ -99,7 +139,7 @@ class ProviderAdapter(ABC):
     def launch_interactive(self, project_root: Path, **kwargs) -> int:
         """Start the provider in interactive TUI mode (user at terminal).
 
-        Equivalent to running `claude`, `codex`, `gemini` in the project dir,
+        Equivalent to running `claude`, `codex`, `agy` in the project dir,
         but with PLAYBOOK_SESSION_ID and PLAYBOOK_PROJECT_ROOT pre-set.
         Returns the process exit code.
         """
@@ -130,7 +170,7 @@ class ProviderAdapter(ABC):
 
         Claude: ~/.claude/projects/<slug>/<session_id>.jsonl
         Codex:  resolved via SQLite state_5.sqlite WHERE cwd=project_root
-        Gemini: None (no session log found on disk)
+        Antigravity (agy): ~/.gemini/antigravity/brain/<uuid>/.system_generated/logs/transcript.jsonl
         """
 
     @abstractmethod
@@ -165,7 +205,7 @@ class ProviderAdapter(ABC):
         """Called from PreToolUse hook. Returns block/allow/warn/skip.
 
         Default: delegates to evaluate_tool_call(). Not called for providers
-        without script-based pre-tool hooks (Codex, Gemini today).
+        without script-based pre-tool hooks (Codex caveats: apply_patch + exec_command matchers).
         """
         from .policy import evaluate_tool_call
         from .events import ToolEvent

@@ -26,35 +26,35 @@ class ProviderCapabilities:
     """
 
     provider: str
-    """Provider identifier: "claude" | "codex" | "gemini" | "unknown"."""
+    """Provider identifier: "claude" | "codex" | "antigravity" | "unknown"."""
 
     has_user_prompt_hook: bool
     """Provider fires a scriptable hook before each user message is processed.
-    Claude: True (UserPromptSubmit). Codex: True when codex_hooks is enabled. Gemini: unknown."""
+    Claude: True (UserPromptSubmit). Codex: True when codex_hooks is enabled. Antigravity: unknown."""
 
     has_pre_tool_hook: bool
     """Provider fires a scriptable hook before each tool call, allowing hard blocks.
-    Claude: True (PreToolUse, exit 2 = block). Codex: Bash-only when codex_hooks is enabled. Gemini: unknown."""
+    Claude: True (PreToolUse, exit 2 = block). Codex: Bash-only when codex_hooks is enabled. Antigravity: unknown."""
 
     has_post_tool_hook: bool
     """Provider fires a scriptable hook after each tool call (observe, no block).
-    Claude: True (PostToolUse). Codex: Bash-only when codex_hooks is enabled. Gemini: unknown."""
+    Claude: True (PostToolUse). Codex: Bash-only when codex_hooks is enabled. Antigravity: unknown."""
 
     has_stop_hook: bool
     """Provider fires a scriptable hook at session end, allowing exit to be blocked.
-    Claude: True (Stop). Codex: True when codex_hooks is enabled. Gemini: AfterAgent (unverified/advisory)."""
+    Claude: True (Stop). Codex: True when codex_hooks is enabled. Antigravity: AfterAgent (unverified/advisory)."""
 
     session_id_in_payload: bool
     """Provider injects session_id into hook stdin JSON payload.
-    Claude: True. Codex: False (use SQLite + PID-walk). Gemini: unknown."""
+    Claude: True. Codex: False (use SQLite + PID-walk). Antigravity: unknown."""
 
     session_log_format: str
     """Format of on-disk session log: "jsonl" | "json" | "none" | "unknown".
-    Claude: "jsonl". Codex: "jsonl". Gemini: "unknown" (no files found)."""
+    Claude: "jsonl". Codex: "jsonl". Antigravity: "unknown" (no files found)."""
 
     session_log_base: Optional[Path]
     """Root directory for session log discovery, or None if unavailable.
-    Claude: ~/.claude/projects/<slug>/. Codex: ~/.codex/sessions/. Gemini: None."""
+    Claude: ~/.claude/projects/<slug>/. Codex: ~/.codex/sessions/. Antigravity: None."""
 
 
 @dataclass
@@ -73,7 +73,7 @@ class SessionFacts:
 
     session_id: str
     """Unique identifier for this provider session.
-    Claude: from hook stdin payload. Codex/Gemini: wrapper UUID or pid-<N> fallback."""
+    Claude: from hook stdin payload. Codex/Antigravity: wrapper UUID or pid-<N> fallback."""
 
     project_root: Path
     """Absolute path to project root (contains .agent/tasks/).

@@ -1,0 +1,42 @@
+#!/bin/bash
+# bin/playbook-agy — launch Antigravity CLI (agy) with a per-session Playbook ID.
+#
+# Usage: playbook-agy [agy-args...]
+#
+# Generates PLAYBOOK_SESSION_ID, provisions the session directory, then execs
+# agy so the agent inherits the env. GEMINI.md in the project root carries
+# workflow instructions; install_hooks (`tasks init --provider antigravity --hooks`)
+# registers a global agy plugin that wires PreToolUse/PostToolUse/UserPromptSubmit/
+# Stop hooks via `agy plugin install`.
+#
+# Canonical user-facing entry point. See src/provider/adapters/antigravity.py
+# launch_interactive() for the programmatic equivalent (assumes env pre-set).
+
+set -e
+
+# Find project root (directory containing .agent/tasks/)
+find_project_root() {
+    local dir="$PWD"
+    while [ "$dir" != "/" ]; do
+        if [ -d "$dir/.agent/tasks" ]; then
+            echo "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    echo ""
+}
+
+PROJECT_ROOT="$(find_project_root)"
+
+# PID-based session ID: pid-$$ (this wrapper's PID = parent of agy process)
+SESSION_ID="pid-$$"
+export PLAYBOOK_SESSION_ID="$SESSION_ID"
+export PLAYBOOK_PROJECT_ROOT="$PROJECT_ROOT"
+
+# Provision session directory so state files have a home
+if [ -n "$PROJECT_ROOT" ]; then
+    mkdir -p "$PROJECT_ROOT/.agent/sessions/$SESSION_ID"
+fi
+
+exec agy "$@"

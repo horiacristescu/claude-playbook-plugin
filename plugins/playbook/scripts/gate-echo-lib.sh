@@ -39,7 +39,7 @@ find_project_root() {
 
 # find_agent_root_pid
 # Walk parent process tree. Output PID of the highest ancestor whose
-# `comm` is claude/codex/gemini, or empty if none found within 20 hops.
+# `comm` is claude/codex/agy, or empty if none found within 20 hops.
 # Mirrors `find_agent_root_pid()` in src/tasks/core.py — both walk the
 # same `ps` tree and converge on the same PID. Used as fallback when
 # PLAYBOOK_SESSION_ID env var isn't propagated.
@@ -55,7 +55,7 @@ find_agent_root_pid() {
         comm=$(echo "$info" | awk '{$1=""; sub(/^ +/, ""); print}')
         comm="${comm##*/}"  # parameter expansion: strip path; safe for "-zsh" (basename would error)
         case "$comm" in
-            claude|codex|gemini) last_agent=$pid ;;
+            claude|codex|agy) last_agent=$pid ;;
         esac
         [ "$ppid" = "$pid" ] && break
         pid=$ppid

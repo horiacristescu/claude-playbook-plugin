@@ -41,9 +41,61 @@ class ClaudeAdapter(ProviderAdapter):
         "[Request interrupted by user]",
     )
 
+    # Variant label → --model CLI argument
+    _MODEL_MAP = {
+        "opus-4-7-1m": "claude-opus-4-7[1m]",
+        "sonnet-4-6": "claude-sonnet-4-6",
+        "haiku-4-5": "claude-haiku-4-5",
+    }
+
     def __init__(self, session_id: str, project_root: Path) -> None:
         self._session_id = session_id
         self._project_root = project_root
+
+    # ── CLI identity ─────────────────────────────────────────────────────────
+
+    @classmethod
+    def binary_name(cls) -> str:
+        return "claude"
+
+    @classmethod
+    def panel_variants(cls) -> list[Optional[str]]:
+        return list(cls._MODEL_MAP.keys())
+
+    def run_headless_judge(
+        self,
+        prompt: str,
+        model: Optional[str],
+        system_context: str,
+        *,
+        web_search: bool,
+        timeout_secs: int,
+    ) -> str:
+        import shutil
+        binary = shutil.which(self.binary_name())
+        if not binary:
+            return f"(error: {self.binary_name()} not found on PATH)"
+        tools = "Read,Glob,Grep"
+        if web_search:
+            tools += ",WebSearch"
+        env = os.environ.copy()
+        env["CLAUDECODE"] = ""
+        env.pop("CLAUDE_CODE_SSE_PORT", None)
+        env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        model_arg = self._MODEL_MAP.get(model, model) if model else "sonnet"
+        cmd_list = [
+            binary, "-p", prompt,
+            "--model", model_arg,
+            "--tools", tools,
+            "--allowedTools", tools,
+            "--append-system-prompt", system_context,
+        ]
+        result = subprocess.run(
+            cmd_list, cwd=str(self._project_root), env=env,
+            capture_output=True, text=True, timeout=timeout_secs,
+        )
+        return result.stdout or "(no output)"
 
     # ── Identity ─────────────────────────────────────────────────────────────
 

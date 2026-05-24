@@ -1001,18 +1001,15 @@ def main():
 
         # --provider: install provider-specific bootstrap file (additive)
         if provider:
-            _PROVIDER_MAP = {"codex": "CodexAdapter", "gemini": "GeminiAdapter"}
+            _PROVIDER_MAP = {"codex": "CodexAdapter", "antigravity": "AntigravityAdapter"}
             if provider not in _PROVIDER_MAP:
-                print(f"Error: unknown provider '{provider}'. Choose: codex, gemini", file=sys.stderr)
-                sys.exit(1)
-            if install_provider_hooks and provider != "codex":
-                print("Error: --hooks is currently supported only with --provider codex", file=sys.stderr)
+                print(f"Error: unknown provider '{provider}'. Choose: codex, antigravity", file=sys.stderr)
                 sys.exit(1)
             import importlib
             adapter_cls_name = _PROVIDER_MAP[provider]
             mod = importlib.import_module(f"provider.adapters.{provider}")
             adapter_cls = getattr(mod, adapter_cls_name)
-            bootstrap_file = {"codex": "AGENTS.md", "gemini": "GEMINI.md"}[provider]
+            bootstrap_file = {"codex": "AGENTS.md", "antigravity": "GEMINI.md"}[provider]
             bs_path = target / bootstrap_file
             already_existed = bs_path.exists()
             adapter = adapter_cls("init", target)
@@ -1021,7 +1018,7 @@ def main():
             if install_provider_hooks:
                 adapter.install_hooks(target)
         elif install_provider_hooks:
-            print("Error: --hooks requires --provider codex", file=sys.stderr)
+            print("Error: --hooks requires --provider codex or --provider antigravity", file=sys.stderr)
             sys.exit(1)
 
     elif cmd == "bootstrap":
@@ -1164,100 +1161,49 @@ def main():
             agent_dir.mkdir(exist_ok=True)
             judge_md = agent_dir / "judge.md"
 
-        # Discover available judges
-        judges = []
-        claude_bin = shutil.which("claude")
-        codex_bin = shutil.which("codex")
-        gemini_bin = shutil.which("gemini")
+        # Discover available judges via adapter classes — each adapter declares
+        # its own binary_name() and panel_variants(). Adding a new provider is
+        # a one-line append to PANEL_ADAPTERS; no dispatch changes needed.
+        from provider.adapters.claude import ClaudeAdapter
+        from provider.adapters.codex import CodexAdapter
+        from provider.adapters.antigravity import AntigravityAdapter
+        PANEL_ADAPTERS = (ClaudeAdapter, CodexAdapter, AntigravityAdapter)
 
-        if claude_bin:
-            for variant in ["opus", "sonnet", "haiku"]:
-                judges.append(("claude", variant, claude_bin))
-        if codex_bin:
-            for variant in ["gpt-5.4", "gpt-5.1-codex-max"]:
-                judges.append(("codex", variant, codex_bin))
-        if gemini_bin:
-            for variant in ["3.1-pro", "2.5-pro"]:
-                judges.append(("gemini", variant, gemini_bin))
+        judges = []  # list of (adapter_cls, variant)
+        for cls in PANEL_ADAPTERS:
+            if shutil.which(cls.binary_name()):
+                for variant in cls.panel_variants():
+                    judges.append((cls, variant))
 
         if not judges:
-            print("Error: no judge backends found (need claude, codex, or gemini on PATH)", file=sys.stderr)
+            binaries = ", ".join(cls.binary_name() for cls in PANEL_ADAPTERS)
+            print(f"Error: no judge backends found (need one of: {binaries} on PATH)", file=sys.stderr)
             sys.exit(1)
 
         display_target = task_path or "(promptless)"
         print(f"Running panel {review_label} on {display_target} ({len(judges)} judges, {timeout_secs}s timeout)...", flush=True)
 
         def run_judge(judge_spec):
-            provider, variant, binary = judge_spec
-            label = f"{provider}:{variant}" if variant else provider
+            adapter_cls, variant = judge_spec
+            provider_name = adapter_cls.binary_name()
+            label = f"{provider_name}:{variant}" if variant else provider_name
             if prompt_fn:
-                prompt = prompt_fn(task_path, inline_context=(provider != "claude"))
+                prompt = prompt_fn(task_path, inline_context=(provider_name != "claude"))
                 if extra_prompt:
                     prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
             else:
                 prompt = extra_prompt
 
             try:
-                if provider == "claude":
-                    tools = "Read,Glob,Grep"
-                    if web_search:
-                        tools += ",WebSearch"
-                    env = os.environ.copy()
-                    env["CLAUDECODE"] = ""
-                    env.pop("CLAUDE_CODE_SSE_PORT", None)
-                    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
-                    env.pop("CLAUDE_PROJECT_DIR", None)
-                    # --allowedTools suppresses plugin hook registration — intentional:
-                    # review agents are read-only evaluators, not task workers.
-                    cmd_list = [
-                        binary, "-p", prompt,
-                        "--model", variant,
-                        "--tools", tools,
-                        "--allowedTools", tools,
-                        "--append-system-prompt", system_context,
-                    ]
-                    result = subprocess.run(
-                        cmd_list, cwd=str(project_path), env=env,
-                        capture_output=True, text=True, timeout=timeout_secs,
-                    )
-                    return label, result.stdout or "(no output)"
-
-                elif provider == "codex":
-                    full_prompt = f"{system_context}\n\n---\n\n{prompt}"
-                    cmd_list = [binary]
-                    if web_search:
-                        cmd_list.append("--search")
-                    cmd_list += ["exec", "--ephemeral", "--skip-git-repo-check",
-                        "--sandbox", "read-only"]
-                    if variant:
-                        cmd_list += ["-m", variant]
-                    cmd_list.append("-")
-                    result = subprocess.run(
-                        cmd_list, cwd=str(project_path),
-                        input=full_prompt, capture_output=True, text=True,
-                        timeout=timeout_secs,
-                    )
-                    return label, result.stdout or "(no output)"
-
-                elif provider == "gemini":
-                    full_prompt = f"{system_context}\n\n---\n\n{prompt}"
-                    # Map simplified variant names to full model IDs
-                    model_id = f"gemini-{variant}"
-                    if variant == "3.1-pro":
-                        model_id = "gemini-3.1-pro-preview"
-                    
-                    cmd_list = [
-                        binary, "-p", full_prompt,
-                        "-m", model_id,
-                        "--approval-mode", "plan",
-                        "-o", "text",
-                    ]
-                    result = subprocess.run(
-                        cmd_list, cwd=str(project_path),
-                        capture_output=True, text=True, timeout=timeout_secs,
-                    )
-                    return label, result.stdout or "(no output)"
-
+                adapter = adapter_cls(session_id="judge", project_root=project_path)
+                output = adapter.run_headless_judge(
+                    prompt=prompt,
+                    model=variant,
+                    system_context=system_context,
+                    web_search=web_search,
+                    timeout_secs=timeout_secs,
+                )
+                return label, output
             except subprocess.TimeoutExpired:
                 return label, f"(timed out after {timeout_secs}s)"
             except Exception as e:
@@ -1300,7 +1246,7 @@ def main():
         review_cmd = cmd
         if not cmd_args:
             print(f"Error: '{review_cmd}' requires a task number", file=sys.stderr)
-            print(f"Usage: tasks {review_cmd} <number> [--backend claude|codex|gemini]", file=sys.stderr)
+            print(f"Usage: tasks {review_cmd} <number> [--backend claude|codex|antigravity]", file=sys.stderr)
             sys.exit(1)
 
         import subprocess
@@ -1321,9 +1267,12 @@ def main():
                 remaining_args.append(cmd_args[i])
                 i += 1
 
-        if backend not in ("claude", "codex", "gemini"):
+        # Accept "agy" as a friendlier alias for "antigravity"
+        if backend == "agy":
+            backend = "antigravity"
+        if backend not in ("claude", "codex", "antigravity"):
             print(f"Error: unknown backend '{backend}'", file=sys.stderr)
-            print("Supported: claude (default), codex, gemini", file=sys.stderr)
+            print("Supported: claude (default), codex, antigravity (alias: agy)", file=sys.stderr)
             sys.exit(1)
 
         if not remaining_args:
@@ -1478,10 +1427,10 @@ def main():
                 text=True,
             )
 
-        else:  # gemini
-            gemini_bin = shutil.which("gemini")
-            if not gemini_bin:
-                print("Error: 'gemini' not found on PATH", file=sys.stderr)
+        else:  # antigravity (agy)
+            agy_bin = shutil.which("agy")
+            if not agy_bin:
+                print("Error: 'agy' not found on PATH", file=sys.stderr)
                 sys.exit(1)
 
             prompt = prompt_fn(task_path, inline_context=True)
@@ -1489,14 +1438,17 @@ def main():
             if extra_prompt:
                 full_prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
 
+            # agy v1.0.2 quirks: --print mode ignores cwd, needs --add-dir;
+            # no -m/--model flag yet (uses whatever the agy UI has set).
             cmd_list = [
-                gemini_bin, "-p", full_prompt,
-                "-m", "gemini-3.1-pro-preview",
-                "--approval-mode", "plan",
-                "-o", "text",
+                agy_bin,
+                "--add-dir", str(project_path),
+                "--print", full_prompt,
+                "--print-timeout", "300s",
+                "--dangerously-skip-permissions",
             ]
 
-            print(f"Running {review_label} (gemini) on {task_path}...", flush=True)
+            print(f"Running {review_label} (agy) on {task_path}...", flush=True)
             result = subprocess.run(
                 cmd_list,
                 cwd=str(project_path),
@@ -1513,7 +1465,7 @@ def main():
         log_name = {
             "claude": "judge.log",
             "codex": "judge-codex.log",
-            "gemini": "judge-gemini.log",
+            "antigravity": "judge-agy.log",
         }.get(backend, "judge.log")
         judge_log = task_file.parent / log_name
         output = (result.stdout or "").strip()

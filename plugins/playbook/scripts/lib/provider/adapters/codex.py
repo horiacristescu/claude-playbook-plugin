@@ -43,10 +43,51 @@ _AGENTS_MD_PREFIXES = ("# AGENTS", "You are ", "# Playbook")
 class CodexAdapter(ProviderAdapter):
     """Provider adapter for Codex CLI (OpenAI)."""
 
+    _PANEL_VARIANTS = ["gpt-5.5", "gpt-5.3-codex"]
+
     def __init__(self, session_id: str, project_root: Path) -> None:
         self._session_id = session_id
         self._project_root = project_root
         self._rollout_path: Optional[Path] = None  # cached after first SQLite lookup
+
+    # ── CLI identity ─────────────────────────────────────────────────────────
+
+    @classmethod
+    def binary_name(cls) -> str:
+        return "codex"
+
+    @classmethod
+    def panel_variants(cls) -> list[Optional[str]]:
+        return list(cls._PANEL_VARIANTS)
+
+    def run_headless_judge(
+        self,
+        prompt: str,
+        model: Optional[str],
+        system_context: str,
+        *,
+        web_search: bool,
+        timeout_secs: int,
+    ) -> str:
+        import shutil
+        binary = shutil.which(self.binary_name())
+        if not binary:
+            return f"(error: {self.binary_name()} not found on PATH)"
+        full_prompt = f"{system_context}\n\n---\n\n{prompt}"
+        cmd_list = [binary]
+        if web_search:
+            cmd_list.append("--search")
+        cmd_list += ["exec", "--ephemeral", "--skip-git-repo-check",
+                     "--sandbox", "read-only"]
+        if model:
+            cmd_list += ["-m", model]
+        cmd_list.append("-")
+        result = subprocess.run(
+            cmd_list, cwd=str(self._project_root),
+            input=full_prompt, capture_output=True, text=True,
+            timeout=timeout_secs,
+        )
+        return result.stdout or "(no output)"
 
     # ── Identity ─────────────────────────────────────────────────────────────
 

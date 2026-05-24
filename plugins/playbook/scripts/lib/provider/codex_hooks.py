@@ -231,9 +231,18 @@ def _playbook_hook_entry(script_name: str, matcher: str | None = None) -> dict:
 def render_playbook_hooks() -> dict:
     """Return the Playbook-owned Codex hooks.json fragment.
 
-    PreToolUse and PostToolUse are scoped to apply_patch only via a `matcher`
-    so they don't fire on every Bash call (which would generate noise and
-    pay overhead on tool-types we don't gate today).
+    PreToolUse: scoped to `^apply_patch$` only — file-edit pre-blocking. Bash
+    (exec_command) is intentionally not pre-blocked; running shell commands
+    without a task is allowed (matches Claude policy).
+
+    PostToolUse: scoped to `^apply_patch$` AND `^exec_command$` so the gate
+    echo fires on both file edits and bash. The same `codex-apply-patch-hook`
+    serves both — `apply_patch_post_context` emits gate-echo text without
+    parsing patch contents, so it works for any tool type. T134 closes the
+    pre-existing gap (MIND_MAP [44]: "Bash shell-out bypasses the apply_patch
+    matcher entirely — pre-edit prevention is apply_patch-only, Stop hook still
+    catches at turn boundary"). With this matcher pair, gate echo now also
+    fires on every bash invocation during an active task.
     """
     return {
         "hooks": {
@@ -248,6 +257,7 @@ def render_playbook_hooks() -> dict:
             ],
             "PostToolUse": [
                 _playbook_hook_entry("codex-apply-patch-hook", matcher="^apply_patch$"),
+                _playbook_hook_entry("codex-apply-patch-hook", matcher="^exec_command$"),
             ],
         }
     }

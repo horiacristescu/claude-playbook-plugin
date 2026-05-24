@@ -552,17 +552,24 @@ checked — not before.
 """.format(cli_ref=cli_reference())
 
 
-def gemini_md_template() -> str:
-    """GEMINI.md content for Gemini CLI projects.
+def antigravity_md_template() -> str:
+    """GEMINI.md content for Antigravity CLI (`agy`) projects.
 
-    Advisory only — Gemini hook model not yet verified.  Gemini may or may
-    not auto-load this file; treat as best-effort guidance.
+    agy reads GEMINI.md from project cwd (mirrors the user-level `~/.gemini/GEMINI.md`
+    convention). Hook enforcement works when `tasks init --provider antigravity --hooks`
+    is run: this installs a global agy plugin via `agy plugin install` that wires
+    PreToolUse / PostToolUse / UserPromptSubmit / Stop hooks to the Playbook scripts.
+
+    Model selection: agy v1.0.2 has no -m CLI flag — set the model from the agy UI
+    (~/.gemini/antigravity/user_settings.pb). When upstream ships -m, panel-review
+    will switch from a single judge to per-model judges automatically.
     """
     return """\
-# Playbook Workflow (Advisory)
+# Playbook Workflow
 
-This project uses the **Playbook task harness**.  Gemini hook enforcement is
-not yet verified; follow these rules as best practice.
+This project uses the **Playbook task harness**.  Hooks are installed globally
+via `agy plugin install` when you run `tasks init --provider antigravity --hooks`.
+Without that step the file is advisory.
 
 ## Start of Session
 
