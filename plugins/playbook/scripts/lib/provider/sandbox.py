@@ -104,15 +104,15 @@ def default_agent() -> str:
 
 
 def is_sandboxed() -> bool:
-    """True if already inside our sandbox — skip re-wrapping to avoid nesting."""
-    if os.environ.get("PLAYBOOK_SANDBOXED") == "1":
-        return True
-    # Eval harness paths are pre-contained; skip wrapping there too.
-    cwd = str(Path.cwd())
-    for prefix in ("/tmp/eval-", "/private/tmp/eval-"):
-        if cwd.startswith(prefix):
-            return True
-    return False
+    """True if already inside our sandbox — skip re-wrapping to avoid nesting.
+
+    Sole signal: PLAYBOOK_SANDBOXED=1 in env. `run()` always exports this
+    before exec'ing the child, so any nested invocation always sees it. The
+    earlier cwd-prefix heuristic (`/tmp/eval-`) was dropped because it could
+    skip wrapping when the launching process's cwd happened to be in the
+    eval tree but the target project_root was elsewhere.
+    """
+    return os.environ.get("PLAYBOOK_SANDBOXED") == "1"
 
 
 def bypass_args(agent: str) -> list[str]:
@@ -120,24 +120,6 @@ def bypass_args(agent: str) -> list[str]:
     if agent not in _BYPASS_FLAGS:
         raise ValueError(f"Unknown agent: {agent!r}")
     return list(_BYPASS_FLAGS[agent])
-
-
-def resolve_launcher(project_root: Path) -> Path:
-    """Locate the bash sandbox launcher script. Never shutil.which() — that
-    would resolve to /usr/bin/sandbox (macOS system binary).
-    """
-    candidates = (
-        project_root / ".claude" / "bin" / "sandbox",
-        project_root / "scripts" / "sandbox",
-        project_root / "bin" / "sandbox",
-    )
-    for c in candidates:
-        if c.is_file() and c.stat().st_size > 0:
-            return c.resolve()
-    raise FileNotFoundError(
-        f"sandbox launcher not found under {project_root} "
-        f"(tried .claude/bin/sandbox, scripts/sandbox, bin/sandbox)"
-    )
 
 
 def _normalize_rw(extra_rw: Iterable[str] | None) -> list[str]:

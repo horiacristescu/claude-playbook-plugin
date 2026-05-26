@@ -91,10 +91,13 @@ class AntigravityAdapter(ProviderAdapter):
             "--print", full_prompt,
             "--print-timeout", f"{timeout_secs}s",
         ]
+        env = os.environ.copy()
+        env["PLAYBOOK_SESSION_ID"] = self._session_id or "judge"
         from provider import sandbox as _sandbox
         result = _sandbox.run(
             "agy", agent_args,
             project_root=self._project_root,
+            env=env,
             capture_output=True, text=True, timeout=timeout_secs + 30,
         )
         return result.stdout or "(no output)"

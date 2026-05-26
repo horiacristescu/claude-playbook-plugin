@@ -67,6 +67,15 @@ class PiAdapter(ProviderAdapter):
         return "pi"
 
     @classmethod
+    def is_available(cls) -> bool:
+        """pi can be driven directly OR via `omlx launch pi` — either suffices.
+        Override default `which(binary_name())` so panel discovery doesn't
+        silently drop pi when only omlx is installed.
+        """
+        import shutil
+        return shutil.which("pi") is not None or shutil.which("omlx") is not None
+
+    @classmethod
     def panel_variants(cls) -> list[Optional[str]]:
         # Local variant (None) always available if pi is installed.
         # Hosted variants gated on the relevant API key being in env —
@@ -103,10 +112,13 @@ class PiAdapter(ProviderAdapter):
         ]
         if model_id:
             agent_args[2:2] = ["--model", model_id]
+        env = os.environ.copy()
+        env["PLAYBOOK_SESSION_ID"] = self._session_id or "judge"
         from provider import sandbox as _sandbox
         result = _sandbox.run(
             "pi", agent_args,
             project_root=self._project_root,
+            env=env,
             capture_output=True, text=True, timeout=timeout_secs,
         )
         return result.stdout or "(no output)"

@@ -55,6 +55,17 @@ class ProviderAdapter(ABC):
         an empty list if the provider is adapter-supported but panel-ineligible.
         """
 
+    @classmethod
+    def is_available(cls) -> bool:
+        """Whether this adapter's CLI is installed and panel-discoverable.
+
+        Default: `shutil.which(cls.binary_name()) is not None`. Override when
+        an adapter has more than one launch path (e.g. PiAdapter accepts either
+        `pi` directly or `omlx launch pi` via wrapper).
+        """
+        import shutil
+        return shutil.which(cls.binary_name()) is not None
+
     @abstractmethod
     def run_headless_judge(
         self,

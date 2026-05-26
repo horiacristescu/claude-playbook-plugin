@@ -1172,7 +1172,7 @@ def main():
 
         judges = []  # list of (adapter_cls, variant)
         for cls in PANEL_ADAPTERS:
-            if shutil.which(cls.binary_name()):
+            if cls.is_available():
                 for variant in cls.panel_variants():
                     judges.append((cls, variant))
 

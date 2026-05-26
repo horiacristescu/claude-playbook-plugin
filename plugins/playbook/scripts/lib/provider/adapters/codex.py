@@ -88,10 +88,13 @@ class CodexAdapter(ProviderAdapter):
         if model:
             agent_args += ["-m", model]
         agent_args.append("-")
+        env = os.environ.copy()
+        env["PLAYBOOK_SESSION_ID"] = self._session_id or "judge"
         from provider import sandbox as _sandbox
         result = _sandbox.run(
             "codex", agent_args,
             project_root=self._project_root,
+            env=env,
             input=full_prompt, capture_output=True, text=True,
             timeout=timeout_secs,
         )

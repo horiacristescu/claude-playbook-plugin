@@ -82,6 +82,7 @@ class ClaudeAdapter(ProviderAdapter):
         env.pop("CLAUDE_CODE_SSE_PORT", None)
         env.pop("CLAUDE_CODE_ENTRYPOINT", None)
         env.pop("CLAUDE_PROJECT_DIR", None)
+        env["PLAYBOOK_SESSION_ID"] = self._session_id or "judge"
         model_arg = self._MODEL_MAP.get(model, model) if model else "sonnet"
         # Bypass flag injected by provider.sandbox.run() — don't pass here.
         agent_args = [
