@@ -153,6 +153,105 @@ def resolve_model(model: str) -> tuple[str, str | None, tuple[str, ...]]:
     )
 
 
+# ── Judge selection (panel-review + single judge) ────────────────────────────
+# Canonical provider keys ("claude" | "codex" | "agy" | "pi") plus the synonyms
+# callers may type. A judge spec is one of: "provider:variant", a bare provider,
+# or an alias from models.json. Resolution returns (provider, variant_or_None);
+# the CLI maps the provider string to a concrete adapter class (kept here to
+# avoid importing adapters into sandbox.py — adapters import sandbox, not vice
+# versa).
+_PROVIDER_SYNONYMS: dict[str, str] = {
+    "claude": "claude",
+    "codex": "codex",
+    "agy": "agy", "antigravity": "agy", "gemini": "agy",
+    "pi": "pi", "qwen": "pi",
+}
+
+
+def _parse_judge_config(path: Path) -> dict:
+    """Read `default_judge` / `panel` from one models.json. {} on any error."""
+    import json
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict = {}
+    dj = raw.get("default_judge")
+    if isinstance(dj, str) and dj.strip():
+        out["default_judge"] = dj.strip()
+    panel = raw.get("panel")
+    if isinstance(panel, list) and all(isinstance(x, str) for x in panel):
+        out["panel"] = [x for x in panel if x.strip()]
+    return out
+
+
+def load_judge_config() -> dict:
+    """Plugin default ⊕ project `.agent/models.json` (project wins per key).
+
+    Returns {"default_judge": str | None, "panel": list[str]}.
+    A project `panel` REPLACES the shipped panel (not merged) — to add claude
+    back, a project lists every judge it wants. Empty/missing → {} defaults.
+    """
+    cfg: dict = {}
+    default_path = Path(__file__).parent / "models.json"
+    if default_path.is_file():
+        cfg.update(_parse_judge_config(default_path))
+    override = _find_project_models_override()
+    if override:
+        cfg.update(_parse_judge_config(override))
+    return {"default_judge": cfg.get("default_judge"), "panel": cfg.get("panel", [])}
+
+
+def resolve_judge_spec(name: str) -> tuple[str, str | None]:
+    """Map a judge spec → (provider, variant_or_None).
+
+    Accepts `provider:variant` (e.g. ``codex:gpt-5.3-codex``,
+    ``claude:opus-4-8-1m``), a bare provider (``codex``, ``agy``…), or a
+    models.json alias (``gpt``, ``opus``, ``gemini``…). Synonyms
+    (antigravity/gemini→agy, qwen→pi) are normalized. Raises ValueError on an
+    unknown spec.
+    """
+    name = name.strip()
+    if not name:
+        raise ValueError("empty judge spec")
+    if ":" in name:
+        prov, _, variant = name.partition(":")
+        prov = prov.strip().lower()
+        if prov not in _PROVIDER_SYNONYMS:
+            raise ValueError(f"unknown provider {prov!r} in judge spec {name!r}")
+        return (_PROVIDER_SYNONYMS[prov], variant.strip() or None)
+    low = name.lower()
+    if low in _PROVIDER_SYNONYMS:
+        return (_PROVIDER_SYNONYMS[low], None)
+    if name in MODEL_ALIASES:
+        agent, model, _extras = MODEL_ALIASES[name]
+        return (_PROVIDER_SYNONYMS.get(agent, agent), model)
+    raise ValueError(
+        f"unknown judge spec {name!r}. Use provider:variant, a provider "
+        f"({', '.join(sorted(set(_PROVIDER_SYNONYMS.values())))}), or an alias "
+        f"({', '.join(MODEL_ALIASES)})."
+    )
+
+
+def format_judge_output(result: subprocess.CompletedProcess) -> str:
+    """Render a judge subprocess result so a failure can never masquerade as a
+    clean empty review (the T139 `(no output)` bug).
+
+    - non-empty stdout → returned verbatim (the review).
+    - empty stdout + non-zero exit → `(FAILED — exit N)` + stderr tail, so the
+      cause (nested-sandbox rc 71, auth, crash) shows up in judge.md.
+    - empty stdout + exit 0 → genuinely empty (`(no output)`).
+    """
+    if result.stdout and result.stdout.strip():
+        return result.stdout
+    rc = result.returncode
+    stderr = (result.stderr or "").strip()
+    if rc != 0:
+        tail = stderr[-800:] if stderr else "(no stderr captured)"
+        return f"(FAILED — exit {rc})\n{tail}"
+    return "(no output)"
+
+
 # Top-level paths (non-home) that must be writable.
 _SYSTEM_RW_PATHS: tuple[str, ...] = (
     "/tmp",
@@ -339,6 +438,60 @@ def _git_dir_of(project_dir: Path) -> Path | None:
     return None
 
 
+_SEATBELT_USABLE: bool | None = None
+_NESTED_WARNED = False
+
+
+# Representative probe profile. MUST contain a `(deny file-write* ...)` rule:
+# macOS lets a trivial `(allow default)` profile nest inside another sandbox,
+# but rejects any profile that ADDS a deny rule with rc 71 `sandbox_apply:
+# Operation not permitted`. Our real profiles (build_seatbelt_profile) always
+# emit deny rules, so the probe must too or it won't predict the real failure.
+# The sentinel path is harmless — `/usr/bin/true` never writes there.
+_SEATBELT_PROBE_PROFILE = (
+    '(version 1)(allow default)'
+    '(deny file-write* (subpath "/playbook-seatbelt-nesting-probe"))'
+)
+
+
+def _seatbelt_usable() -> bool:
+    """True if `sandbox-exec` can apply a *deny-bearing* profile in this process.
+
+    Returns False when nested inside *another* macOS sandbox (e.g. Codex's
+    default Seatbelt command sandbox): `sandbox-exec` then fails at
+    `sandbox_apply` with rc 71 because macOS forbids a nested sandbox adding
+    write restrictions. We can't see a foreign outer sandbox via env (only our
+    own PLAYBOOK_SANDBOXED), so we probe once with a representative profile
+    (must mirror build_seatbelt_profile's deny rule) and cache the result.
+    """
+    global _SEATBELT_USABLE
+    if _SEATBELT_USABLE is None:
+        if platform.system() != "Darwin" or not shutil.which("sandbox-exec"):
+            _SEATBELT_USABLE = False
+        else:
+            try:
+                probe = subprocess.run(
+                    ["sandbox-exec", "-p", _SEATBELT_PROBE_PROFILE, "/usr/bin/true"],
+                    capture_output=True, timeout=10,
+                )
+                _SEATBELT_USABLE = probe.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                _SEATBELT_USABLE = False
+    return _SEATBELT_USABLE
+
+
+def _warn_nested_once() -> None:
+    global _NESTED_WARNED
+    if not _NESTED_WARNED:
+        _NESTED_WARNED = True
+        print(
+            "[playbook] sandbox-exec can't apply here (nested inside another "
+            "sandbox, e.g. Codex's) — running under the outer sandbox's "
+            "containment instead.",
+            file=sys.stderr,
+        )
+
+
 def run(
     agent: str,
     agent_args: list[str],
@@ -351,8 +504,8 @@ def run(
 ) -> subprocess.CompletedProcess:
     """Run an agent under sandbox containment. Composes bypass-flag injection
     into argv, generates seatbelt/bwrap wrapping, exports PLAYBOOK_SANDBOXED=1
-    in child env. If already inside a sandbox (nesting), skips wrapping but
-    still injects bypass flags.
+    in child env. If already inside a sandbox (ours OR a foreign one we can't
+    nest in), skips wrapping but still injects bypass flags.
     """
     project = Path(project_root).resolve()
     child_env = dict(os.environ) if env is None else dict(env)
@@ -361,12 +514,18 @@ def run(
     inner_argv = _compose_agent_argv(agent, agent_args)
 
     if is_sandboxed():
-        # Already inside outer sandbox — exec target directly.
+        # Already inside our own outer sandbox — exec target directly.
         wrapped = inner_argv
     elif platform.system() == "Darwin" and shutil.which("sandbox-exec"):
-        git_dir = _git_dir_of(project)
-        profile = build_seatbelt_profile(project, git_dir, extra_rw)
-        wrapped = ["sandbox-exec", "-p", profile, *inner_argv]
+        if _seatbelt_usable():
+            git_dir = _git_dir_of(project)
+            profile = build_seatbelt_profile(project, git_dir, extra_rw)
+            wrapped = ["sandbox-exec", "-p", profile, *inner_argv]
+        else:
+            # Nested in a foreign sandbox (macOS forbids sandbox-exec nesting,
+            # rc 71). Run directly — the outer sandbox provides containment.
+            _warn_nested_once()
+            wrapped = inner_argv
     elif shutil.which("bwrap"):
         git_dir = _git_dir_of(project)
         wrapped = build_bwrap_argv(project, git_dir, inner_argv, extra_rw)

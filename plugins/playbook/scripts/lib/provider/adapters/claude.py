@@ -43,10 +43,18 @@ class ClaudeAdapter(ProviderAdapter):
 
     # Variant label → --model CLI argument
     _MODEL_MAP = {
-        "opus-4-7-1m": "claude-opus-4-7[1m]",
+        "opus-4-8-1m": "claude-opus-4-8[1m]",
         "sonnet-4-6": "claude-sonnet-4-6",
         "haiku-4-5": "claude-haiku-4-5",
     }
+    # NOTE: claude-fable-5 deliberately NOT listed — Fable 5 / Mythos 5 were
+    # pulled offline 2026-06-12 by US Commerce export-control order (disabled
+    # worldwide). Re-add as a named-only variant if/when it returns.
+
+    # Variants in the default panel fan-out (claude isn't in the shipped panel
+    # default anyway — see models.json "panel"; this backs the legacy fan-out
+    # fallback and bare-"claude" naming).
+    _DEFAULT_PANEL_VARIANTS = ("opus-4-8-1m", "sonnet-4-6", "haiku-4-5")
 
     def __init__(self, session_id: str, project_root: Path) -> None:
         self._session_id = session_id
@@ -60,7 +68,7 @@ class ClaudeAdapter(ProviderAdapter):
 
     @classmethod
     def panel_variants(cls) -> list[Optional[str]]:
-        return list(cls._MODEL_MAP.keys())
+        return list(cls._DEFAULT_PANEL_VARIANTS)
 
     def run_headless_judge(
         self,
@@ -100,7 +108,7 @@ class ClaudeAdapter(ProviderAdapter):
             env=env,
             capture_output=True, text=True, timeout=timeout_secs,
         )
-        return result.stdout or "(no output)"
+        return _sandbox.format_judge_output(result)
 
     # ── Identity ─────────────────────────────────────────────────────────────
 

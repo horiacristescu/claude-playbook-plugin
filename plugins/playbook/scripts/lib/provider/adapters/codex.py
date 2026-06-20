@@ -4,7 +4,7 @@ CodexAdapter — provider adapter for OpenAI Codex CLI.
 Current Codex reality:
   - AGENTS.md is auto-loaded as repo guidance.
   - An experimental lifecycle hook system exists behind
-    [features] codex_hooks = true in ~/.codex/config.toml.
+    [features] hooks = true in ~/.codex/config.toml.
   - Repo-local .codex/hooks.json can register UserPromptSubmit / Stop hooks,
     while PreToolUse/PostToolUse currently emit only Bash events.
 
@@ -98,7 +98,7 @@ class CodexAdapter(ProviderAdapter):
             input=full_prompt, capture_output=True, text=True,
             timeout=timeout_secs,
         )
-        return result.stdout or "(no output)"
+        return _sandbox.format_judge_output(result)
 
     # ── Identity ─────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ class CodexAdapter(ProviderAdapter):
     def install_hooks(self, project_root: Path) -> None:
         """Enable Codex hooks globally and install repo-local Playbook hooks.
 
-        Global enablement lives in ~/.codex/config.toml (`features.codex_hooks`).
+        Global enablement lives in ~/.codex/config.toml (`features.hooks`).
         Actual Playbook behavior is repo-local via <project>/.codex/hooks.json.
         """
         config_changed = enable_codex_hooks_feature(codex_config_path())
@@ -140,9 +140,9 @@ class CodexAdapter(ProviderAdapter):
         print("  Codex hooks     installed")
         print("    Hooks file:   .codex/hooks.json")
         if config_changed:
-            print("    Global config: enabled [features].codex_hooks in ~/.codex/config.toml")
+            print("    Global config: enabled [features].hooks in ~/.codex/config.toml")
         else:
-            print("    Global config: [features].codex_hooks already enabled")
+            print("    Global config: [features].hooks already enabled")
         print("    Warning: this Codex feature flag is global; the installed hooks file is repo-local")
 
     def uninstall_hooks(self, project_root: Path) -> None:
@@ -181,7 +181,7 @@ class CodexAdapter(ProviderAdapter):
     def detect_capabilities(self) -> ProviderCapabilities:
         """Probe Codex environment for available capabilities.
 
-        When codex_hooks=true in ~/.codex/config.toml, the experimental hook
+        When hooks=true in ~/.codex/config.toml, the experimental hook
         system is active: UserPromptSubmit, PreToolUse (Bash only), PostToolUse
         (Bash only), and Stop all fire at turn scope and support block+reason.
 
@@ -201,9 +201,11 @@ class CodexAdapter(ProviderAdapter):
         )
 
     def _probe_stop_hook(self, config_path: Optional[Path] = None) -> bool:
-        """Check ~/.codex/config.toml for [features] codex_hooks = true.
+        """Check ~/.codex/config.toml for [features] hooks = true.
 
-        Codex 0.120.0+ exposes an experimental hook system behind a feature flag.
+        Codex exposes its hook system behind a feature flag. The flag was renamed
+        `codex_hooks` -> `hooks` (stable as of codex 0.141); we accept either so a
+        config that hasn't been re-migrated still reads as enabled.
         When enabled, Stop/PreToolUse/PostToolUse hooks fire at turn scope and can
         return {"decision": "block", "reason": "..."} to continue the turn with a
         steering prompt.
@@ -218,7 +220,9 @@ class CodexAdapter(ProviderAdapter):
             import tomllib
             with open(config_path, "rb") as f:
                 config = tomllib.load(f)
-            return config.get("features", {}).get("codex_hooks", False) is True
+            features = config.get("features", {})
+            return (features.get("hooks", False) is True
+                    or features.get("codex_hooks", False) is True)
         except Exception:
             return False
 

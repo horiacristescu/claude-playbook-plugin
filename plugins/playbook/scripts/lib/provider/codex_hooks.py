@@ -134,13 +134,19 @@ def codex_config_path(home_dir: Path | None = None) -> Path:
 
 
 def enable_codex_hooks_feature(config_path: Path) -> bool:
-    """Ensure [features] codex_hooks = true exists, preserving unrelated content.
+    """Ensure [features] hooks = true exists, preserving unrelated content.
+
+    Codex renamed the feature flag `codex_hooks` -> `hooks` (stable as of
+    codex 0.141; the old `codex_hooks` is deprecated and absent from
+    `codex features list`, and `plugin_hooks` was removed entirely). We write
+    `hooks = true` and migrate any legacy `codex_hooks` line in the [features]
+    block so upgrading installs stop riding the deprecated alias.
 
     Returns True when the file content changed.
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
     if not config_path.exists():
-        config_path.write_text("[features]\ncodex_hooks = true\n", encoding="utf-8")
+        config_path.write_text("[features]\nhooks = true\n", encoding="utf-8")
         return True
 
     original = config_path.read_text(encoding="utf-8")
@@ -169,18 +175,28 @@ def enable_codex_hooks_feature(config_path: Path) -> bool:
             new_text += "\n"
         if new_text:
             new_text += "\n"
-        new_text += "[features]\ncodex_hooks = true\n"
+        new_text += "[features]\nhooks = true\n"
     else:
         updated = list(lines)
-        found_key = False
+        # Within [features]: set `hooks = true`; migrate/drop legacy `codex_hooks`.
+        hooks_idx = None
+        legacy_idxs = []
         for idx in range(features_start + 1, features_end):
-            stripped = updated[idx].strip()
-            if stripped.startswith("codex_hooks"):
-                updated[idx] = "codex_hooks = true"
-                found_key = True
-                break
-        if not found_key:
-            updated.insert(features_end, "codex_hooks = true")
+            key = updated[idx].split("=", 1)[0].strip()
+            if key == "hooks":
+                hooks_idx = idx
+            elif key == "codex_hooks":
+                legacy_idxs.append(idx)
+        if hooks_idx is not None:
+            updated[hooks_idx] = "hooks = true"
+            for idx in sorted(legacy_idxs, reverse=True):
+                del updated[idx]
+        elif legacy_idxs:
+            updated[legacy_idxs[0]] = "hooks = true"
+            for idx in sorted(legacy_idxs[1:], reverse=True):
+                del updated[idx]
+        else:
+            updated.insert(features_end, "hooks = true")
         new_text = "\n".join(updated)
         if original.endswith("\n"):
             new_text += "\n"
@@ -601,6 +617,23 @@ def _turn_baseline_file(project_root: Path, session_id: str, turn_id: str | None
     return session_dir / f"codex-dirty-baseline-{safe_turn_id}.json"
 
 
+def _stop_block_marker_file(project_root: Path, session_id: str, turn_id: str | None) -> Path:
+    """Marker recording that the Codex Stop hook already blocked once this turn.
+
+    Codex has NO stop-block cap — unlike Claude's `stop_hook_active`
+    self-release and the `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` runtime cap (2.1.143).
+    So a persistent block condition loops forever: e.g. a concurrent agent
+    editing the shared worktree, whose changes whole-tree `git status` can't
+    distinguish from this session's. We block at most once per turn, then
+    self-release. The marker is keyed by turn_id and reset on each new turn's
+    baseline so a genuinely new edit still gets nudged once.
+    """
+    safe_turn_id = _baseline_key(turn_id)
+    session_dir = project_root / ".agent" / "sessions" / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir / f"codex-stop-blocked-{safe_turn_id}.flag"
+
+
 def _chat_log_path(project_root: Path) -> Path:
     return project_root / ".agent" / "chat_log.md"
 
@@ -817,6 +850,14 @@ def save_turn_baseline(project_root: Path, session_id: str, turn_id: str | None)
         json.dumps(code_state(project_root), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    # Re-arm the per-turn stop-block self-release: a fresh turn may legitimately
+    # block once again. (Keyed by turn_id, so distinct turns are independent;
+    # this matters when turn_id is missing and degrades to a session key.)
+    marker = _stop_block_marker_file(project_root, session_id, turn_id)
+    try:
+        marker.unlink()
+    except (OSError, FileNotFoundError):
+        pass
     return baseline_file
 
 
@@ -875,11 +916,35 @@ def stop_decision_for_no_task_code_changes(
     session_id: str,
     turn_id: str | None,
 ) -> dict:
-    """Return the JSON response for Codex Stop hooks.
+    """Return the JSON response for Codex Stop hooks, capped at one block per turn.
 
     Missing turn identifiers degrade to a session-scoped baseline rather than
-    disabling enforcement silently.
+    disabling enforcement silently. **Self-release**: any block decision fires at
+    most once per turn — Codex has no stop-block cap (no `stop_hook_active`,
+    no `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`), so a persistent block condition (e.g. a
+    concurrent agent editing the shared worktree) would otherwise loop forever.
+    The marker is reset each new turn (`save_turn_baseline`), so a genuinely new
+    edit still gets nudged once. See `_stop_block_marker_file`.
     """
+    decision = _compute_stop_decision(project_root, session_id, turn_id)
+    if decision.get("decision") == "block":
+        marker = _stop_block_marker_file(project_root, session_id, turn_id)
+        if marker.exists():
+            return {}  # already nudged this turn — let the turn end
+        try:
+            marker.write_text("1", encoding="utf-8")
+        except OSError:
+            pass
+    return decision
+
+
+def _compute_stop_decision(
+    project_root: Path,
+    session_id: str,
+    turn_id: str | None,
+) -> dict:
+    """Raw Codex stop evaluation (no self-release; wrapped by
+    stop_decision_for_no_task_code_changes)."""
     if has_active_task(project_root, session_id):
         return _active_task_stop_decision(project_root, session_id)
 

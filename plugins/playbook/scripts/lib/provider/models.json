@@ -1,11 +1,14 @@
 {
-  "_doc": "Model aliases for bin/sandbox --model <alias>. Each entry is [agent, canonical_model_or_null, [extra_args]]. Model strings drift between releases — edit this file (or shadow with .agent/models.json in a project) when an upstream version changes. Schema is stable; only values move.",
-  "_updated": "2026-05-26",
+  "_doc": "Model aliases for bin/sandbox --model <alias> AND judge selection. Each alias entry is [agent, canonical_model_or_null, [extra_args]]. 'default_judge' is the single plan/impl-review backend when --backend is omitted (provider or provider:variant). 'panel' is the default panel-review judge set (entries are 'provider:variant' or a bare provider; an alias name also works). Override per-project by shadowing with .agent/models.json; override per-run with --models / --backend / --model. Model strings drift between releases — edit values here when an upstream version changes. Schema is stable; only values move.",
+  "_updated": "2026-06-14",
+  "default_judge": "codex",
+  "panel": ["codex:gpt-5.5", "codex:gpt-5.3-codex", "agy"],
   "aliases": {
-    "opus":     ["claude", "claude-opus-4-7[1m]", []],
+    "opus":     ["claude", "claude-opus-4-8[1m]", []],
     "sonnet":   ["claude", "claude-sonnet-4-6", []],
     "haiku":    ["claude", "claude-haiku-4-5", []],
     "gpt":      ["codex", "gpt-5.5", []],
+    "gpt-codex": ["codex", "gpt-5.3-codex", []],
     "gemini":   ["agy", null, []],
     "qwen":     ["pi", null, ["--provider", "oss"]],
     "deepseek": ["pi", "deepseek/deepseek-v4-flash", ["--provider", "openrouter"]]

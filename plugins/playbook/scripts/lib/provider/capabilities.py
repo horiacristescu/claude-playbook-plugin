@@ -30,19 +30,19 @@ class ProviderCapabilities:
 
     has_user_prompt_hook: bool
     """Provider fires a scriptable hook before each user message is processed.
-    Claude: True (UserPromptSubmit). Codex: True when codex_hooks is enabled. Antigravity: unknown."""
+    Claude: True (UserPromptSubmit). Codex: True when the hooks feature is enabled. Antigravity: unknown."""
 
     has_pre_tool_hook: bool
     """Provider fires a scriptable hook before each tool call, allowing hard blocks.
-    Claude: True (PreToolUse, exit 2 = block). Codex: Bash-only when codex_hooks is enabled. Antigravity: unknown."""
+    Claude: True (PreToolUse, exit 2 = block). Codex: Bash-only when the hooks feature is enabled. Antigravity: unknown."""
 
     has_post_tool_hook: bool
     """Provider fires a scriptable hook after each tool call (observe, no block).
-    Claude: True (PostToolUse). Codex: Bash-only when codex_hooks is enabled. Antigravity: unknown."""
+    Claude: True (PostToolUse). Codex: Bash-only when the hooks feature is enabled. Antigravity: unknown."""
 
     has_stop_hook: bool
     """Provider fires a scriptable hook at session end, allowing exit to be blocked.
-    Claude: True (Stop). Codex: True when codex_hooks is enabled. Antigravity: AfterAgent (unverified/advisory)."""
+    Claude: True (Stop). Codex: True when the hooks feature is enabled. Antigravity: AfterAgent (unverified/advisory)."""
 
     session_id_in_payload: bool
     """Provider injects session_id into hook stdin JSON payload.

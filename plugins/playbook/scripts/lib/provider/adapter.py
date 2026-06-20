@@ -135,7 +135,7 @@ class ProviderAdapter(ABC):
         """Register Playbook hooks with the provider's hook system.
 
         Claude: writes hooks entries to .claude/settings.json.
-        Codex:  enables codex_hooks globally and writes repo-local .codex/hooks.json.
+        Codex:  enables the hooks feature globally and writes repo-local .codex/hooks.json.
         Antigravity (agy): writes a global plugin manifest via `agy plugin install`
             with Claude-compatible hooks/hooks.json.
         """

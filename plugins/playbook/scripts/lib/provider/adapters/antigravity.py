@@ -100,7 +100,7 @@ class AntigravityAdapter(ProviderAdapter):
             env=env,
             capture_output=True, text=True, timeout=timeout_secs + 30,
         )
-        return result.stdout or "(no output)"
+        return _sandbox.format_judge_output(result)
 
     # ── Identity ─────────────────────────────────────────────────────────────
 

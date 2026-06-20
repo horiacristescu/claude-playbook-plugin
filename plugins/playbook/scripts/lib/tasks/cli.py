@@ -1064,11 +1064,15 @@ def main():
         extra_prompt = ""
         no_mind_map = False
         bare = False
+        models_flag = None  # --models CSV → explicit judge set for this run
         remaining_args = []
         i = 0
         while i < len(cmd_args):
             if cmd_args[i] == "--mode" and i + 1 < len(cmd_args):
                 review_mode = cmd_args[i + 1]
+                i += 2
+            elif cmd_args[i] == "--models" and i + 1 < len(cmd_args):
+                models_flag = [s.strip() for s in cmd_args[i + 1].split(",") if s.strip()]
                 i += 2
             elif cmd_args[i] == "--web-search":
                 web_search = True
@@ -1100,7 +1104,7 @@ def main():
         # Task number is optional; --prompt required when omitted
         if not task_num and not extra_prompt:
             print("Error: 'panel-review' requires a task number or --prompt", file=sys.stderr)
-            print("Usage: tasks panel-review [<number>] [--mode plan|impl] [--prompt \"...\"] [--no-mind-map] [--bare] [--web-search] [--timeout SECONDS]", file=sys.stderr)
+            print("Usage: tasks panel-review [<number>] [--mode plan|impl] [--models codex:gpt-5.5,agy,...] [--prompt \"...\"] [--no-mind-map] [--bare] [--web-search] [--timeout SECONDS]", file=sys.stderr)
             sys.exit(1)
 
         project_path = find_project_root()
@@ -1168,17 +1172,50 @@ def main():
         from provider.adapters.codex import CodexAdapter
         from provider.adapters.antigravity import AntigravityAdapter
         from provider.adapters.pi import PiAdapter
+        from provider.sandbox import load_judge_config, resolve_judge_spec
         PANEL_ADAPTERS = (ClaudeAdapter, CodexAdapter, AntigravityAdapter, PiAdapter)
+        _JUDGE_ADAPTERS = {
+            "claude": ClaudeAdapter, "codex": CodexAdapter,
+            "agy": AntigravityAdapter, "pi": PiAdapter,
+        }
+
+        # Judge-set precedence: --models flag → models.json `panel` (shipped ⊕
+        # project .agent/models.json) → legacy full fan-out (only if no config).
+        if models_flag is not None:
+            spec_names = models_flag
+        else:
+            spec_names = load_judge_config().get("panel") or None
 
         judges = []  # list of (adapter_cls, variant)
-        for cls in PANEL_ADAPTERS:
-            if cls.is_available():
-                for variant in cls.panel_variants():
+        if spec_names:
+            skipped = []
+            for nm in spec_names:
+                try:
+                    provider, variant = resolve_judge_spec(nm)
+                except ValueError as e:
+                    print(f"Error: {e}", file=sys.stderr)
+                    sys.exit(1)
+                cls = _JUDGE_ADAPTERS.get(provider)
+                if cls is None:
+                    print(f"Error: no adapter for provider '{provider}' (spec '{nm}')", file=sys.stderr)
+                    sys.exit(1)
+                if cls.is_available():
                     judges.append((cls, variant))
+                else:
+                    skipped.append(f"{nm} ({cls.binary_name()} not on PATH)")
+            if skipped:
+                print(f"  Skipped unavailable: {', '.join(skipped)}", flush=True)
+        else:
+            # No configured panel — legacy discovery (all providers × variants).
+            for cls in PANEL_ADAPTERS:
+                if cls.is_available():
+                    for variant in cls.panel_variants():
+                        judges.append((cls, variant))
 
         if not judges:
-            binaries = ", ".join(cls.binary_name() for cls in PANEL_ADAPTERS)
-            print(f"Error: no judge backends found (need one of: {binaries} on PATH)", file=sys.stderr)
+            print("Error: no available judges. Install a provider CLI, or name "
+                  "reachable ones with --models (e.g. --models codex:gpt-5.5,agy).",
+                  file=sys.stderr)
             sys.exit(1)
 
         display_target = task_path or "(promptless)"
@@ -1220,10 +1257,25 @@ def main():
                 results[label] = output
                 print(f"  [{label}] done", flush=True)
 
+        # Classify each judge as succeeded vs failed — a failed judge must NOT
+        # read as a clean empty review (T139). Failure markers come from the
+        # adapters' format_judge_output ("(FAILED — exit N)", "(no output)") and
+        # run_judge's own guards ("(timed out…)", "(error:…)").
+        def _judge_failed(text: str) -> bool:
+            t = text.lstrip()
+            return (t.startswith("(FAILED") or t.startswith("(timed out")
+                    or t.startswith("(error") or t == "(no output)")
+
+        failed = {lbl for lbl, out in results.items() if _judge_failed(out)}
+        succeeded = len(results) - len(failed)
+
         # Write judge.md (path already set above based on task_file presence)
         display_label = task_path or extra_prompt[:60]
         lines = [f"# Panel {review_label.title()} — {display_label}\n"]
-        lines.append(f"**Judges:** {len(results)} | **Web search:** {'yes' if web_search else 'no'} | **Timeout:** {timeout_secs}s\n\n")
+        lines.append(f"**Judges:** {succeeded}/{len(results)} succeeded | **Web search:** {'yes' if web_search else 'no'} | **Timeout:** {timeout_secs}s\n")
+        if failed:
+            lines.append(f"**⚠ Failed judges:** {', '.join(sorted(failed))} — see their blocks below for the exit code / stderr. NOT a clean empty review.\n")
+        lines.append("\n")
         # Triage frame (T124): prepend the pushback discipline AT THE TOP so
         # the reading agent meets the instruction BEFORE the per-judge
         # findings — primes the triage lens before the data is read.
@@ -1234,32 +1286,40 @@ def main():
         # discipline rides with the data. Helper is unit-tested in tests/test_cli.py.
         lines.extend(_panel_triage_frame())
         for label in sorted(results.keys()):
+            tag = "  [FAILED]" if label in failed else ""
             lines.append("═" * 60)
-            lines.append(f"  JUDGE: {label}")
+            lines.append(f"  JUDGE: {label}{tag}")
             lines.append("═" * 60 + "\n")
             lines.append(results[label].strip())
             lines.append("\n\n")
         judge_md.write_text("\n".join(lines), encoding="utf-8")
-        print(f"\nSaved: {judge_md.relative_to(project_path)} ({len(results)}/{len(judges)} judges)", flush=True)
+        summary = f"\nSaved: {judge_md.relative_to(project_path)} ({succeeded}/{len(judges)} judges succeeded)"
+        if failed:
+            summary += f"; FAILED: {', '.join(sorted(failed))}"
+        print(summary, flush=True)
 
     elif cmd in ("plan-review", "impl-review", "judge"):
         # "judge" is a legacy alias — auto-detects mode from task status
         review_cmd = cmd
         if not cmd_args:
             print(f"Error: '{review_cmd}' requires a task number", file=sys.stderr)
-            print(f"Usage: tasks {review_cmd} <number> [--backend claude|codex|antigravity]", file=sys.stderr)
+            print(f"Usage: tasks {review_cmd} <number> [--backend codex|claude|agy|pi] [--model <variant>] [--prompt \"...\"]  (default backend: models.json default_judge, ships codex)", file=sys.stderr)
             sys.exit(1)
 
         import subprocess
 
         # Parse flags
-        backend = "claude"
+        backend = None   # explicit --backend; else from models.json default_judge
+        model = None     # explicit --model (variant within the backend)
         extra_prompt = ""
         remaining_args = []
         i = 0
         while i < len(cmd_args):
             if cmd_args[i] == "--backend" and i + 1 < len(cmd_args):
                 backend = cmd_args[i + 1]
+                i += 2
+            elif cmd_args[i] == "--model" and i + 1 < len(cmd_args):
+                model = cmd_args[i + 1]
                 i += 2
             elif cmd_args[i] == "--prompt" and i + 1 < len(cmd_args):
                 extra_prompt = cmd_args[i + 1]
@@ -1268,14 +1328,27 @@ def main():
                 remaining_args.append(cmd_args[i])
                 i += 1
 
-        # Accept friendlier aliases: "agy" → "antigravity", "qwen" → "pi"
-        if backend == "agy":
+        # No --backend → models.json default_judge (provider or provider:variant,
+        # project-overridable; ships as "codex" so headless review avoids the
+        # metered claude -p path by default). --model overrides the variant.
+        if backend is None:
+            from provider.sandbox import load_judge_config, resolve_judge_spec
+            dj = load_judge_config().get("default_judge") or "claude"
+            try:
+                backend, dj_variant = resolve_judge_spec(dj)
+            except ValueError:
+                backend, dj_variant = dj, None
+            if model is None:
+                model = dj_variant
+
+        # Accept friendlier aliases: "agy"/"gemini" → "antigravity", "qwen" → "pi"
+        if backend in ("agy", "gemini"):
             backend = "antigravity"
         elif backend == "qwen":
             backend = "pi"
         if backend not in ("claude", "codex", "antigravity", "pi"):
             print(f"Error: unknown backend '{backend}'", file=sys.stderr)
-            print("Supported: claude (default), codex, antigravity (alias: agy), pi (alias: qwen)", file=sys.stderr)
+            print("Supported: codex (default), claude, antigravity (alias: agy), pi (alias: qwen)", file=sys.stderr)
             sys.exit(1)
 
         if not remaining_args:
@@ -1342,12 +1415,11 @@ def main():
             # The judge is a read-only evaluator sandboxed via provider.sandbox
             # (write containment via seatbelt/bwrap). PLAYBOOK_SESSION_ID=judge
             # above lets hooks identify judge sessions if needed.
-            claude_args = [
-                "-p",
-                "--max-budget-usd", "2",
-                "--append-system-prompt", system_context,
-                prompt,
-            ]
+            claude_args = ["-p", "--max-budget-usd", "2"]
+            if model:
+                from provider.adapters.claude import ClaudeAdapter
+                claude_args += ["--model", ClaudeAdapter._MODEL_MAP.get(model, model)]
+            claude_args += ["--append-system-prompt", system_context, prompt]
 
             from provider import sandbox as _sandbox
             print(f"Running {review_label} (claude) on {task_path}...", flush=True)
@@ -1373,8 +1445,10 @@ def main():
             codex_log = task_file.parent / "judge-codex.log"
             # Bypass flag (--dangerously-bypass-approvals-and-sandbox) inserted
             # after `exec` by provider.sandbox._compose_agent_argv.
-            codex_args = [
-                "exec",
+            codex_args = ["exec"]
+            if model:
+                codex_args += ["-m", model]
+            codex_args += [
                 "-s", "workspace-write",
                 "--ephemeral",
                 "-C", str(project_path),
@@ -1406,6 +1480,8 @@ def main():
             if extra_prompt:
                 full_prompt += f"\n\nAdditional steering from the user:\n{extra_prompt}"
 
+            if model:
+                print(f"  (note: agy has no model flag — ignoring --model {model}; uses agy's UI-selected model)", flush=True)
             # agy v1.0.2 quirks: --print mode ignores cwd, needs --add-dir;
             # no -m/--model flag yet (uses whatever the agy UI has set).
             # Bypass (--dangerously-skip-permissions) prepended by sandbox.
@@ -1446,6 +1522,8 @@ def main():
                 "--no-context-files",
                 "--append-system-prompt", system_context,
             ]
+            if model:
+                pi_args += ["--model", model]
 
             pi_env = os.environ.copy()
             pi_env["PLAYBOOK_SESSION_ID"] = "judge"

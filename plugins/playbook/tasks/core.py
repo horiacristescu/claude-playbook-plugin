@@ -7,7 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 
 AGENT_PROCESS_NAMES = frozenset({"claude", "codex", "agy", "pi"})
 
