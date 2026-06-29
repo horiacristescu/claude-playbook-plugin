@@ -15,7 +15,7 @@ from pathlib import Path
 # Import the helper from the tasks package (cli.py guards its dispatch under __main__).
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent / "plugins/playbook"))
-from tasks.cli import sort_overflow_by_id, _scan_overflow_ids  # noqa: E402
+from tasks.cli import sort_overflow_by_id, _scan_overflow_ids, _node_starts, _parse_nodes  # noqa: E402
 
 
 class TestSortOverflow(unittest.TestCase):
@@ -153,21 +153,27 @@ class TestSortOverflow(unittest.TestCase):
 class TestMindmapSyncCLI(unittest.TestCase):
     """IF6 — exercise the real `mindmap-sync --fix` write path end-to-end."""
 
-    def _run_fix(self, tmp, main, overflow):
+    def _run_fix_rc(self, tmp, main, overflow):
+        """Run `mindmap-sync --fix`; return (returncode, overflow_bytes). Does NOT
+        assert success — lets fail-closed (non-zero exit) cases be tested."""
         import os
         import subprocess
-        (tmp / ".agent" / "tasks").mkdir(parents=True)
+        (tmp / ".agent" / "tasks").mkdir(parents=True, exist_ok=True)
         (tmp / "MIND_MAP.md").write_text(main, encoding="utf-8")
         # write overflow byte-exact (preserve any CRLF) via binary
         (tmp / "MIND_MAP_OVERFLOW.md").write_bytes(overflow.encode("utf-8"))
         env = dict(os.environ)
         env["PYTHONPATH"] = str(_HERE.parent / "plugins/playbook")
-        subprocess.run(
+        r = subprocess.run(
             [sys.executable, "-m", "tasks.cli", "mindmap-sync", "--fix"],
-            cwd=str(tmp), env=env, check=True,
-            capture_output=True, text=True,
+            cwd=str(tmp), env=env, capture_output=True, text=True,
         )
-        return (tmp / "MIND_MAP_OVERFLOW.md").read_bytes()
+        return r.returncode, (tmp / "MIND_MAP_OVERFLOW.md").read_bytes()
+
+    def _run_fix(self, tmp, main, overflow):
+        rc, out = self._run_fix_rc(tmp, main, overflow)
+        self.assertEqual(rc, 0, f"--fix exited {rc} unexpectedly")
+        return out
 
     def test_cli_sort_only(self):
         import tempfile
@@ -203,6 +209,180 @@ class TestMindmapSyncCLI(unittest.TestCase):
         self.assertEqual(_scan_overflow_ids(out.decode("utf-8"))[0], [1, 2])
         self.assertIn(b"\r\n", out)          # CRLF preserved
         self.assertNotIn(b"[1] one\n\n[2]", out)  # not normalized to LF
+
+    # --- task 007: P1 raw-span drift/append (byte/CRLF/fail-closed) ---
+
+    def test_cli_drift_substring_node_untouched(self):
+        # Node [1]'s body ("abc") is a SUBSTRING of node [2]'s body ("abcdef").
+        # A stripped-body global replace() would corrupt [2]; the raw-span edit
+        # must touch only [1].
+        import tempfile
+        main = "[1] abc-SYNCED\n\n[2] abcdef\n"
+        ov = "[1] abc\n\n[2] abcdef\n"
+        with tempfile.TemporaryDirectory() as d:
+            out = self._run_fix(Path(d), main, ov).decode("utf-8")
+        self.assertIn("[2] abcdef", out)        # node 2 intact
+        self.assertIn("abc-SYNCED", out)        # node 1 synced
+        self.assertEqual(_scan_overflow_ids(out)[0], [1, 2])
+
+    def test_cli_crlf_drift_preserved(self):
+        # Drift of an EXISTING node on a CRLF file must keep \r\n (the direct
+        # data-loss scenario; read_text would have normalized to LF).
+        import tempfile
+        main = "[1] one-SYNCED\n\n[2] two\n"
+        ov = "[1] one\r\n\r\n[2] two\r\n"
+        with tempfile.TemporaryDirectory() as d:
+            out = self._run_fix(Path(d), main, ov)
+        self.assertIn(b"\r\n", out)
+        self.assertNotIn(b"\r\r\n", out)        # no doubled CR
+        self.assertIn(b"one-SYNCED", out)
+
+    def test_cli_crlf_append_preserved(self):
+        # Appending a main_only node to a CRLF overflow keeps CRLF on the new node.
+        import tempfile
+        main = "[1] one\n\n[2] two\n\n[3] three\n"
+        ov = "[1] one\r\n\r\n[2] two\r\n"      # missing [3]
+        with tempfile.TemporaryDirectory() as d:
+            out = self._run_fix(Path(d), main, ov)
+        self.assertIn(b"\r\n", out)
+        self.assertNotIn(b"\r\r\n", out)
+        self.assertIn(b"[3] three", out)
+        self.assertEqual(_scan_overflow_ids(out.decode("utf-8"))[0], [1, 2, 3])
+
+    def test_cli_append_no_final_newline(self):
+        # Overflow with NO trailing newline + a main_only node → append must not
+        # glue the new node onto the last one.
+        import tempfile
+        main = "[1] one\n\n[2] two\n"
+        ov = "[1] one"                          # no final newline, missing [2]
+        with tempfile.TemporaryDirectory() as d:
+            out = self._run_fix(Path(d), main, ov).decode("utf-8")
+        self.assertEqual(_scan_overflow_ids(out)[0], [1, 2])
+        self.assertNotIn("one[2]", out)         # not concatenated
+        self.assertIn("[1] one\n\n[2] two", out)
+
+    def test_cli_drift_idempotent(self):
+        # Running --fix twice: the second run is a byte no-op.
+        import tempfile
+        main = "[1] one-SYNCED\n\n[2] two\n"
+        ov = "[1] one\n\n[2] two\n"
+        with tempfile.TemporaryDirectory() as d:
+            first = self._run_fix(Path(d), main, ov)
+            # feed the first result back in as the overflow
+            second = self._run_fix(Path(d), main, first.decode("utf-8"))
+        self.assertEqual(first, second)         # idempotent
+
+    def test_cli_fail_closed_unmatched_fence(self):
+        # An unmatched code fence makes _partition_overflow return None. With drift
+        # present, --fix must FAIL CLOSED: non-zero exit, file byte-unchanged.
+        import tempfile
+        main = "[1] one-SYNCED\n\n[2] two\n"
+        ov = "[1] one\n```\nunclosed fence never terminated\n\n[2] two\n"
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run_fix_rc(Path(d), main, ov)
+        self.assertNotEqual(rc, 0)              # failed closed
+        self.assertEqual(out, ov.encode("utf-8"))  # file untouched
+
+    def test_cli_fail_closed_unmatched_fence_in_main(self):
+        # W7: an unmatched fence in MIND_MAP.md mis-parses the sync source, so
+        # --fix must fail closed (non-zero, overflow untouched) even though the
+        # overflow itself is well-formed.
+        import tempfile
+        main = "[1] one-SYNCED\n```\nunclosed fence in MAIN\n\n[2] two\n"
+        ov = "[1] one\n\n[2] two\n"
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run_fix_rc(Path(d), main, ov)
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(out, ov.encode("utf-8"))
+
+    def test_cli_sort_only_blocked_by_main_fence(self):
+        # W11a: an unmatched fence in MIND_MAP.md must block even a SORT-ONLY --fix
+        # (no drift / no main_only), because the early guard fires before any write.
+        import tempfile
+        main = "[1] one\n```\nunclosed fence in MAIN\n\n[2] two\n"
+        ov = "[2] two\n\n[1] one\n"        # out of order → would otherwise sort
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run_fix_rc(Path(d), main, ov)
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(out, ov.encode("utf-8"))   # not sorted, not written
+
+    def test_cli_mixed_newline_drift_no_spurious_abort(self):
+        # W11b: a mostly-LF overflow with one stray CRLF elsewhere must still sync
+        # an LF drifted span (per-span newline detection), not fail closed.
+        import tempfile
+        main = "[1] one-SYNCED\n\n[2] two\n"
+        ov = "[1] one\n\n[2] two\r\n"      # node [1] is LF; a stray CRLF on [2]
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run_fix_rc(Path(d), main, ov)
+        self.assertEqual(rc, 0)                       # no spurious fail-closed
+        self.assertIn(b"one-SYNCED", out)
+
+    def test_cli_untouched_node_separators_preserved(self):
+        # W6: syncing one node must NOT canonicalize the blank-line separators of
+        # other, untouched nodes (a triple-blank stays a triple-blank).
+        import tempfile
+        main = "[1] one-SYNCED\n\n[2] two\n\n[3] three\n"
+        ov = "[1] one\n\n[2] two\n\n\n[3] three\n"   # triple blank between 2 and 3
+        with tempfile.TemporaryDirectory() as d:
+            out = self._run_fix(Path(d), main, ov)
+        self.assertIn(b"two\n\n\n[3]", out)          # triple blank preserved
+        self.assertIn(b"one-SYNCED", out)
+
+    def test_cli_drifted_node_post_heading_tail_preserved(self):
+        # W6: a drifted node whose overflow body has a glued `## heading` + content
+        # (which _extract_nodes truncates) must keep that tail — only the body
+        # before the heading is synced.
+        import tempfile
+        main = "[1] alpha-SYNCED\n## sub\nkept tail\n\n[2] two\n"
+        ov = "[1] alpha\n## sub\nkept tail\n\n[2] two\n"
+        with tempfile.TemporaryDirectory() as d:
+            out = self._run_fix(Path(d), main, ov).decode("utf-8")
+        self.assertIn("kept tail", out)
+        self.assertIn("alpha-SYNCED", out)
+
+    def test_node_start_id_agreement_across_parsers(self):
+        # Panel I3: the cli `_node_starts` and ref-integrity `_node_ids` must agree
+        # on node-START id sets (NOT body extent) — including ignoring a fenced [N].
+        import importlib.util
+        ri_path = _HERE.parent / "plugins/playbook/skills/merge/ref-integrity.py"
+        spec = importlib.util.spec_from_file_location("ref_integrity_cmp", ri_path)
+        ri = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ri)
+        fixture = ("[1] **a** — body\n"
+                   "```\n[99] fenced not a node\n```\n"
+                   "[2] **b** — body\n[3] **c** — body\n")
+        cli_starts, _ = _node_starts(fixture.splitlines(keepends=True))
+        cli_ids = [nid for _, nid in cli_starts]
+        self.assertEqual(cli_ids, ri._node_ids(fixture))
+        self.assertEqual(cli_ids, [1, 2, 3])    # fenced [99] excluded by both
+
+
+class TestParseNodes(unittest.TestCase):
+    """task 007 W9 — the hoisted merge-collision parser `_parse_nodes`."""
+
+    def test_fenced_bracket_stays_in_body(self):
+        # A fenced `[99] ` line must NOT start a ghost node — it stays inside the
+        # enclosing node's raw body (which feeds the md5 collision check).
+        text = ("[1] **a** body\n"
+                "```\n[99] fenced not a node\n```\n"
+                "tail of one\n[2] **b** body\n")
+        nodes = _parse_nodes(text)
+        self.assertEqual(sorted(nodes), [1, 2])          # no ghost [99]
+        self.assertIn("[99] fenced not a node", nodes[1])  # fenced line kept in body
+        self.assertIn("tail of one", nodes[1])
+
+    def test_raw_body_accumulation_no_heading_trim(self):
+        # Unlike _extract_nodes, _parse_nodes does NOT truncate at a heading.
+        text = "[1] **a** body\n## sub\nmore\n[2] **b** body\n"
+        nodes = _parse_nodes(text)
+        self.assertIn("## sub", nodes[1])
+        self.assertIn("more", nodes[1])
+
+    def test_trailing_space_required(self):
+        # The regex requires `[N] ` (trailing space) — a bare `[5]` line is not a
+        # node definition here (intended, pre-existing behavior).
+        self.assertEqual(_parse_nodes("[5]no-space\n"), {})
+        self.assertEqual(sorted(_parse_nodes("[5] real node\n")), [5])
 
 
 if __name__ == "__main__":

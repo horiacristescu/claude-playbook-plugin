@@ -293,6 +293,65 @@ class RefIntegrityTest(unittest.TestCase):
         findings, _, _ = self._check(main, overflow, base="B", remap="2:3")
         self.assertEqual(findings, [], findings)
 
+    # --- task 007: fence-aware node + slug parsing (P2) ---
+
+    def test_fenced_bracket_not_a_node_id(self):
+        # A `[99]` line INSIDE a ``` fence must not be counted as a node
+        # definition (no ghost node → no false duplicate/contiguity failure).
+        text = ("[1] **a** — body\n"
+                "```\n[99] not a real node\n```\n"
+                "more body\n[2] **b** — body\n")
+        self.assertEqual(ri._node_ids(text), [1, 2])
+        self.assertNotIn(99, ri._node_bodies(text))
+        # the fenced line stays inside node [1]'s body (not amputated to a node)
+        self.assertIn("[99] not a real node", ri._node_bodies(text)[1])
+
+    def test_fenced_bracket_no_false_contiguity_failure(self):
+        # End to end: a fenced [99] in an otherwise-contiguous 1..2 map is clean.
+        main = ("[1] **a** — see [2]\n"
+                "```\n[99] example node line\n```\n"
+                "[2] **b** — end\n")
+        findings, _, _ = self._check(main, "")
+        self.assertEqual(findings, [], findings)
+
+    def test_fenced_title_does_not_define_slug(self):
+        # A fenced `[99] **Fake Title**` must NOT define `fake-title` — otherwise
+        # it would mask a genuinely dangling [[fake-title]] link as resolved.
+        text = ("[1] **Real** — body\n"
+                "```\n[99] **Fake Title** — fenced example\n```\n"
+                "[2] **Two** — body\n")
+        slugs = ri._defined_slugs(text)
+        self.assertIn("real", slugs)
+        self.assertIn("two", slugs)
+        self.assertNotIn("fake-title", slugs)
+        # and the dangling-slug check now flags a real [[fake-title]] reference
+        self.assertIn("fake-title",
+                      ri._dangling_slugs("see [[fake-title]]", slugs))
+
+    def test_fenced_title_dangling_slug_flagged_with_base(self):
+        # The whole point: a fenced fake title no longer hides a NEW dangling slug.
+        self._with_base("[1] **root** — base\n", "[1] **root** — base\n")
+        main = ("[1] **root** — base, see [[fake-title]]\n"
+                "```\n[2] **Fake Title** — fenced, not a real node\n```\n")
+        findings, _, _ = self._check(main, "", base="B")
+        self.assertTrue(any("fake-title" in f for f in findings), findings)
+
+    def test_fenced_slug_reference_not_dangling(self):
+        # W8: a [[slug]] reference INSIDE a code fence is illustrative, not a real
+        # link — even though the fenced [N] **Title** no longer defines the slug,
+        # the fenced reference must be stripped (mirrors _refs), so NO dangling
+        # finding. A genuine unfenced dangling [[slug]] is still flagged.
+        self._with_base("[1] **root** — base\n", "[1] **root** — base\n")
+        main = ("[1] **root** — base\n"
+                "```\n[2] **Demo** — example, see [[demo]]\n```\n")
+        findings, _, _ = self._check(main, "", base="B")
+        self.assertFalse(any("demo" in f for f in findings),
+                         f"fenced [[demo]] must not be a dangling finding: {findings}")
+        # control: an unfenced dangling slug IS reported
+        main2 = "[1] **root** — base, see [[ghost]]\n"
+        findings2, _, _ = self._check(main2, "", base="B")
+        self.assertTrue(any("ghost" in f for f in findings2), findings2)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

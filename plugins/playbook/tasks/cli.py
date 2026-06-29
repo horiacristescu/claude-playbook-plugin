@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 import time
@@ -563,6 +564,35 @@ def _prepare_merge_chatlog(project_path: Path, agent_dir: Path, target: str,
     (agent_dir / "chat_log_counter").write_text(str(new_highest) + "\n", encoding="utf-8")
 
 
+_FENCE_RE = re.compile(r"^\s*```")
+_NODE_HEAD_RE = re.compile(r"^\[(\d+)\]")
+
+
+def _node_starts(lines: list[str]) -> tuple[list[tuple[int, int]], bool]:
+    """Fence-aware scan for node-definition lines — the ONE shared node-boundary
+    detector behind `_partition_overflow`, `_scan_overflow_ids`, and the
+    `mindmap-sync` `_extract_nodes`. All three agree on node STARTS because they
+    share this scan (body extent is each caller's own concern).
+
+    `lines` is `content.splitlines(keepends=True)`. Returns
+    `(starts, in_fence_at_eof)` where `starts = [(line_index, node_id)]` for every
+    `^[N]` line that is NOT inside a ``` code fence — so a fenced `[9]` example is
+    never a ghost node. An unmatched fence surfaces as `in_fence_at_eof=True` so
+    callers can fail closed.
+    """
+    starts: list[tuple[int, int]] = []
+    in_fence = False
+    for i, ln in enumerate(lines):
+        if _FENCE_RE.match(ln):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            m = _NODE_HEAD_RE.match(ln)
+            if m:
+                starts.append((i, int(m.group(1))))
+    return starts, in_fence
+
+
 def _partition_overflow(content: str):
     """Fence-aware partition of an OVERFLOW file into (preamble, spans, tail).
 
@@ -577,23 +607,11 @@ def _partition_overflow(content: str):
     span — recognized ONLY at a heading **preceded by a blank line**, so a `## …`
     line glued directly to node prose stays part of that node (not amputated).
     """
-    import re
-
-    fence_re = re.compile(r"^\s*```")
-    head_re = re.compile(r"^\[(\d+)\]")
+    fence_re = _FENCE_RE
     heading_re = re.compile(r"^#{1,6}\s")
 
     lines = content.splitlines(keepends=True)
-    starts: list[tuple[int, int]] = []
-    in_fence = False
-    for i, ln in enumerate(lines):
-        if fence_re.match(ln):
-            in_fence = not in_fence
-            continue
-        if not in_fence:
-            m = head_re.match(ln)
-            if m:
-                starts.append((i, int(m.group(1))))
+    starts, in_fence = _node_starts(lines)   # shared fence-aware scan
     if in_fence or not starts:
         return None
 
@@ -692,26 +710,48 @@ def sort_overflow_by_id(content: str) -> tuple[str, bool, str]:
 
 def _scan_overflow_ids(content: str) -> tuple[list[int], bool, bool]:
     """Fence-aware node-id scan. Returns (ids_in_file_order, in_fence_at_eof, ok)."""
-    import re
+    starts, in_fence = _node_starts(content.splitlines(keepends=True))
+    return ([nid for _, nid in starts], in_fence, not in_fence)
 
-    fence_re = re.compile(r"^\s*```")
-    head_re = re.compile(r"^\[(\d+)\]")
-    ids: list[int] = []
+
+def _parse_nodes(text: str) -> dict[int, str]:
+    """node_id -> full raw body, for the git-merge collision detector
+    (`_prepare_merge_mindmap`). Distinct from `_extract_nodes`/`_node_bodies`: it
+    accumulates EVERY line of a node verbatim (no heading-trim) and requires a
+    trailing space after `[N]` — its bodies feed an md5 comparison, so byte-exact
+    accumulation is the point.
+
+    Fence-aware (task 007): a `[N] ` line INSIDE a ``` code fence is NOT a node
+    start — otherwise a fenced example would ghost-split the enclosing node and
+    mis-attribute its body. Node-START detection uses the same fence toggle as
+    `_node_starts`; the fence line itself is kept in the current node's body.
+    Hoisted to module level (was nested) so it is unit-testable.
+    """
+    nodes: dict[int, str] = {}
+    current_id: int | None = None
+    current_lines: list[str] = []
     in_fence = False
-    for ln in content.splitlines(keepends=True):
-        if fence_re.match(ln):
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
             in_fence = not in_fence
+            if current_id is not None:
+                current_lines.append(line)
             continue
-        if not in_fence:
-            m = head_re.match(ln)
-            if m:
-                ids.append(int(m.group(1)))
-    return (ids, in_fence, not in_fence)
+        m = None if in_fence else re.match(r"^\[(\d+)\] ", line)
+        if m:
+            if current_id is not None:
+                nodes[current_id] = "".join(current_lines)
+            current_id = int(m.group(1))
+            current_lines = [line]
+        elif current_id is not None:
+            current_lines.append(line)
+    if current_id is not None and current_lines:
+        nodes[current_id] = "".join(current_lines)
+    return nodes
 
 
 def _prepare_merge_mindmap(project_path: Path, target: str, merge_base: str) -> None:
     import subprocess
-    import re
     import hashlib
 
     def _git_show_text(ref: str, rel_path: str) -> str:
@@ -722,23 +762,6 @@ def _prepare_merge_mindmap(project_path: Path, target: str, merge_base: str) -> 
             )
         except subprocess.CalledProcessError:
             return ""
-
-    def _parse_nodes(text: str) -> dict[int, str]:
-        nodes: dict[int, str] = {}
-        current_id: int | None = None
-        current_lines: list[str] = []
-        for line in text.splitlines(keepends=True):
-            m = re.match(r"^\[(\d+)\] ", line)
-            if m:
-                if current_id is not None:
-                    nodes[current_id] = "".join(current_lines)
-                current_id = int(m.group(1))
-                current_lines = [line]
-            elif current_id is not None:
-                current_lines.append(line)
-        if current_id is not None and current_lines:
-            nodes[current_id] = "".join(current_lines)
-        return nodes
 
     def _h(text: str) -> str:
         return hashlib.md5(text.encode()).hexdigest()
@@ -2683,35 +2706,55 @@ def main():
         def _extract_nodes(filepath: Path) -> dict[int, str]:
             """Extract {node_id: full_text} from a mind map file.
 
-            Splitting on the `^[N]` lookahead makes the LAST node absorb
-            everything to EOF — so a trailing `## Legacy`/notes section would be
-            folded into that node's text and show up as phantom drift. Guard
-            against that by cutting a node's text at the first markdown heading
-            (`#…`) after its first line — but NOT a `#` line inside a fenced code
+            Node STARTS come from the shared fence-aware `_node_starts` scan, so a
+            `[N]` line inside a ``` fence is NOT a node boundary (it stays part of
+            the enclosing node) — the three mind-map parsers agree on starts.
+
+            The LAST node would otherwise absorb everything to EOF, so a trailing
+            `## Legacy`/notes section is cut at the first markdown heading (`#…`)
+            after the node's first line — but NOT a `#` line inside a fenced code
             block (a `# comment` in a code example), so multi-line overflow node
             bodies with code aren't truncated.
             """
             content = filepath.read_text(encoding="utf-8")
+            lines = content.splitlines(keepends=True)
+            starts, _ = _node_starts(lines)   # fence-aware: a fenced [N] is not a node
             nodes: dict[int, str] = {}
-            parts = _re.split(r'(?m)^(?=\[\d+\])', content)
-            for part in parts:
-                m = _re.match(r'^\[(\d+)\]', part)
-                if m:
-                    lines = part.split('\n')
-                    end = len(lines)
-                    in_fence = False
-                    for i in range(1, len(lines)):
-                        if lines[i].lstrip().startswith('```'):
-                            in_fence = not in_fence
-                            continue
-                        if not in_fence and _re.match(r'^#{1,6}\s', lines[i]):
-                            end = i
-                            break
-                    nodes[int(m.group(1))] = '\n'.join(lines[:end]).strip()
+            for k, (idx, nid) in enumerate(starts):
+                end_idx = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
+                part = ''.join(lines[idx:end_idx])
+                plines = part.split('\n')
+                end = len(plines)
+                in_fence = False
+                for i in range(1, len(plines)):
+                    if plines[i].lstrip().startswith('```'):
+                        in_fence = not in_fence
+                        continue
+                    if not in_fence and _re.match(r'^#{1,6}\s', plines[i]):
+                        end = i
+                        break
+                nodes[nid] = '\n'.join(plines[:end]).strip()
             return nodes
 
         main_nodes = _extract_nodes(main_file)
         overflow_nodes = _extract_nodes(overflow_file)
+
+        # Guard: an unmatched code fence in MIND_MAP.md makes `_extract_nodes`'
+        # node boundaries (and thus every drift/missing diagnostic below AND the
+        # sync source of truth) unreliable. Detect it up front — before any
+        # diagnostic is printed or any --fix path (incl. sort-only) writes — so the
+        # operator isn't handed a misleading "Missing from overflow" list computed
+        # from a corrupt parse. Hard-stop under --fix; warn in read-only mode.
+        _, _main_in_fence = _node_starts(
+            main_file.read_text(encoding="utf-8").splitlines(keepends=True))
+        if _main_in_fence:
+            msg = ("MIND_MAP.md has an unmatched code fence — its node boundaries "
+                   "can't be trusted")
+            if fix_mode:
+                print(f"Error: {msg}, so --fix won't run. File(s) NOT modified; "
+                      "close the fence and re-run.", file=sys.stderr)
+                sys.exit(1)
+            print(f"Warning: {msg}; the counts below may be wrong.", file=sys.stderr)
 
         # Size stats
         main_size = main_file.stat().st_size
@@ -2784,18 +2827,78 @@ def main():
         # --fix: copy main→overflow for EVERY drifted full node (any length sign,
         # incl. same-length ref remaps) plus nodes missing from overflow, THEN
         # numerically sort the result (idempotent — appended nodes land in place).
+        #
+        # The drift edit is a span-SCOPED replace keyed by node id (via the
+        # fence-aware `_partition_overflow`): for each drifted node, ONLY that
+        # node's body substring is swapped INSIDE its own raw span (count=1), so
+        # (a) one node's text being a substring of another can't cause a
+        # wrong-occurrence hit, (b) untouched spans stay byte-identical (separators
+        # and all), and (c) any post-body remainder of a drifted node (e.g. a glued
+        # `## heading` + content that `_extract_nodes` truncates away) is preserved
+        # rather than dropped. It is CRLF-safe end to end: it reuses the
+        # newline-preserving `overflow_raw` (no `read_text` LF-normalization), and
+        # converts both the old and new node text (LF, from `read_text`) to the
+        # overflow's native newline before matching/splicing. `main_only` nodes are
+        # appended at the boundary, each emitting its OWN `sep` (NOT relying on the
+        # trailing sort, which returns bytes unchanged when ids are already
+        # ascending); interior separators of existing nodes are left untouched.
         if fix_mode and (drifted or main_only or sort_needed):
             if drifted or main_only:
-                overflow_content = overflow_file.read_text(encoding="utf-8")
-                fixed = 0
-                for nid, _ in drifted:
-                    old_text = overflow_nodes[nid]
-                    new_text = main_nodes[nid]
-                    overflow_content = overflow_content.replace(old_text, new_text)
-                    fixed += 1
-                for nid in main_only:
-                    overflow_content = overflow_content.rstrip() + "\n\n" + main_nodes[nid] + "\n"
-                    fixed += 1
+                # (MIND_MAP.md's fence integrity was already verified up front,
+                # before any diagnostic or write — see the guard after extraction.)
+                parsed = _partition_overflow(overflow_raw)
+                if parsed is None:
+                    # Fail closed: an ambiguous structure (unmatched code fence, a
+                    # section heading inside a non-last node, or no nodes) can't be
+                    # edited span-by-span safely. Write NOTHING and exit non-zero —
+                    # never fall through to the old corrupting replace()/rstrip().
+                    print("Error: MIND_MAP_OVERFLOW.md has an ambiguous structure "
+                          "(unmatched code fence, or a section heading inside a "
+                          "non-last node) — --fix cannot safely edit raw spans. "
+                          "File NOT modified; resolve the structure by hand and "
+                          "re-run.", file=sys.stderr)
+                    sys.exit(1)
+                preamble, spans, tail = parsed
+                nl = "\r\n" if "\r\n" in overflow_raw else "\n"
+                sep = nl + nl
+                drift_ids = {nid for nid, _ in drifted}
+                # Drift: swap ONLY the drifted node's body inside its own span,
+                # preserving every other byte (untouched spans + drifted remainder).
+                # The old/new text is converted to the SPAN's own newline style
+                # (not the file's dominant one) so a stray CRLF elsewhere in an
+                # otherwise-LF file can't make `old` un-matchable and trip a
+                # spurious fail-closed on a node that's actually fine.
+                out_spans = []
+                for nid, span in spans:
+                    if nid in drift_ids:
+                        span_nl = "\r\n" if "\r\n" in span else "\n"
+                        old = overflow_nodes[nid].replace("\n", span_nl)
+                        new = main_nodes[nid].replace("\n", span_nl)
+                        if old not in span:
+                            print(f"Error: could not locate node [{nid}]'s current "
+                                  "body within its span for an exact sync — --fix "
+                                  "aborted, file NOT modified.", file=sys.stderr)
+                            sys.exit(1)
+                        out_spans.append(span.replace(old, new, 1))
+                    else:
+                        out_spans.append(span)               # byte-identical
+                overflow_content = preamble + "".join(out_spans)
+                # Append main_only nodes at the boundary only (interior separators
+                # of existing nodes untouched): trim the last span's trailing
+                # newlines, re-add a canonical sep before each new node, and a sep
+                # before the trailing section if one exists.
+                if main_only:
+                    overflow_content = overflow_content.rstrip("\r\n")
+                    for nid in main_only:
+                        overflow_content += sep + main_nodes[nid].replace("\n", nl)
+                    if tail:
+                        overflow_content += sep
+                overflow_content = overflow_content + tail
+                if overflow_raw.endswith("\r\n") and not overflow_content.endswith("\r\n"):
+                    overflow_content += "\r\n"
+                elif overflow_raw.endswith("\n") and not overflow_content.endswith("\n"):
+                    overflow_content += "\n"
+                fixed = len(drifted) + len(main_only)
             else:
                 overflow_content = overflow_raw   # sort-only: preserve newlines
                 fixed = 0

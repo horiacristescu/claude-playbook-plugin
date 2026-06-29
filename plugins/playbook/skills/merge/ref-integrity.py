@@ -53,23 +53,44 @@ def _strip_code(text: str) -> str:
     return re.sub(r'`[^`]*`', '', '\n'.join(out))
 
 
+def _node_start_lines(text: str) -> list[tuple[int, int]]:
+    """Fence-aware node-definition line scan — the ONE node-boundary detector
+    shared by `_node_ids`, `_node_bodies`, and `_defined_slugs`. (A vendored copy
+    of the tasks-package `_node_starts`: ref-integrity ships standalone in the
+    skill dir and cannot import from `tasks`.)
+
+    Returns ``[(line_index, node_id)]`` for every ``^[N]`` line NOT inside a ```
+    code fence, so a fenced ``[9]`` example line is never a ghost node. Line model
+    is ``text.split('\\n')`` (matches the legacy `_node_bodies` reconstruction)."""
+    starts: list[tuple[int, int]] = []
+    in_fence = False
+    for i, line in enumerate(text.split('\n')):
+        if line.lstrip().startswith('```'):
+            in_fence = not in_fence
+            continue
+        if not in_fence and (m := _NODE_DEF.match(line)):
+            starts.append((i, int(m.group(1))))
+    return starts
+
+
 def _node_ids(text: str) -> list[int]:
-    """Node-definition ids in document order (repeats kept → enables dup check)."""
-    return [int(m.group(1)) for line in text.splitlines()
-            if (m := _NODE_DEF.match(line))]
+    """Node-definition ids in document order (repeats kept → enables dup check).
+    Fence-aware: a fenced ``[N]`` line is not counted."""
+    return [nid for _, nid in _node_start_lines(text)]
 
 
 def _node_bodies(text: str) -> dict[int, str]:
-    """node_id -> full body (multi-line preserved). A trailing non-node section
-    (e.g. ``## Legacy``) is trimmed at the first heading after the first line —
-    but headings INSIDE a fenced code block (e.g. a ``# comment`` line) don't
-    count, so a code example in an overflow body isn't truncated."""
+    """node_id -> full body (multi-line preserved). Node STARTS are fence-aware
+    (a fenced ``[N]`` line is not a boundary). A trailing non-node section (e.g.
+    ``## Legacy``) is trimmed at the first heading after the first line — but
+    headings INSIDE a fenced code block (e.g. a ``# comment`` line) don't count,
+    so a code example in an overflow body isn't truncated."""
     bodies: dict[int, str] = {}
-    for part in re.split(r'(?m)^(?=\[\d+\])', text):
-        m = _NODE_DEF.match(part)
-        if not m:
-            continue
-        lines = part.split('\n')
+    all_lines = text.split('\n')
+    starts = _node_start_lines(text)
+    for k, (idx, nid) in enumerate(starts):
+        end_idx = starts[k + 1][0] if k + 1 < len(starts) else len(all_lines)
+        lines = all_lines[idx:end_idx]
         end = len(lines)
         in_fence = False
         for i in range(1, len(lines)):
@@ -79,7 +100,7 @@ def _node_bodies(text: str) -> dict[int, str]:
             if not in_fence and _HEADING.match(lines[i]):
                 end = i
                 break
-        bodies[int(m.group(1))] = '\n'.join(lines[:end]).strip()
+        bodies[nid] = '\n'.join(lines[:end]).strip()
     return bodies
 
 
@@ -108,12 +129,22 @@ def _slugify(title: str) -> str:
 
 
 def _defined_slugs(text: str) -> set[str]:
-    return {_slugify(m.group(1)) for line in text.splitlines()
-            if (m := _TITLE.match(line))}
+    """Title slugs from real node-definition lines ONLY (fence-aware). A fenced
+    ``[99] **Fake Title**`` must NOT define ``fake-title`` — otherwise it would
+    mask a genuinely dangling ``[[fake-title]]`` link as resolved."""
+    lines = text.split('\n')
+    return {_slugify(m.group(1))
+            for idx, _ in _node_start_lines(text)
+            if (m := _TITLE.match(lines[idx]))}
 
 
 def _dangling_slugs(text: str, defined: set[str]) -> set[str]:
-    return {s for s in _SLUG.findall(text) if _slugify(s) not in defined}
+    # Strip fenced/inline code first (mirrors `_refs`): a `[[slug]]` inside a code
+    # example is illustrative, not a real link. This matters now that
+    # `_defined_slugs` is fence-aware — a fenced `[N] **Fake Title**` no longer
+    # defines `fake-title`, so a fenced `[[fake-title]]` would otherwise surface
+    # as a false-positive dangling link.
+    return {s for s in _SLUG.findall(_strip_code(text)) if _slugify(s) not in defined}
 
 
 def _refs(text: str) -> set[int]:
