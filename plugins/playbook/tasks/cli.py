@@ -563,6 +563,152 @@ def _prepare_merge_chatlog(project_path: Path, agent_dir: Path, target: str,
     (agent_dir / "chat_log_counter").write_text(str(new_highest) + "\n", encoding="utf-8")
 
 
+def _partition_overflow(content: str):
+    """Fence-aware partition of an OVERFLOW file into (preamble, spans, tail).
+
+    `spans` is `[(node_id, raw_span_text)]` in file order, and
+    `preamble + ''.join(raw) + tail == content` byte-for-byte. Returns **None**
+    (caller fails closed) when the structure is ambiguous or unsafe to reorder:
+    an unmatched code fence, no nodes, a blank-line-preceded markdown heading
+    inside a NON-last node (can't tell node content from a section), or a coverage
+    miss.
+
+    `tail` = a trailing non-node section (e.g. `## Legacy`) detached off the LAST
+    span — recognized ONLY at a heading **preceded by a blank line**, so a `## …`
+    line glued directly to node prose stays part of that node (not amputated).
+    """
+    import re
+
+    fence_re = re.compile(r"^\s*```")
+    head_re = re.compile(r"^\[(\d+)\]")
+    heading_re = re.compile(r"^#{1,6}\s")
+
+    lines = content.splitlines(keepends=True)
+    starts: list[tuple[int, int]] = []
+    in_fence = False
+    for i, ln in enumerate(lines):
+        if fence_re.match(ln):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            m = head_re.match(ln)
+            if m:
+                starts.append((i, int(m.group(1))))
+    if in_fence or not starts:
+        return None
+
+    preamble = "".join(lines[: starts[0][0]])
+    spans: list[tuple[int, str]] = []
+    for k, (idx, nid) in enumerate(starts):
+        end = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
+        spans.append((nid, "".join(lines[idx:end])))
+
+    def _section_heading_idx(span_text: str):
+        """Line index of the first blank-line-preceded heading (fence-aware), or None."""
+        sl = span_text.splitlines(keepends=True)
+        infence = False
+        for j in range(1, len(sl)):
+            if fence_re.match(sl[j]):
+                infence = not infence
+                continue
+            if not infence and heading_re.match(sl[j]) and sl[j - 1].strip() == "":
+                return j
+        return None
+
+    # A section heading inside a non-last node is ambiguous — refuse to reorder.
+    for _, span in spans[:-1]:
+        if _section_heading_idx(span) is not None:
+            return None
+
+    # Detach a trailing section off the LAST span (blank-preceded heading only).
+    tail = ""
+    last_nid, last_span = spans[-1]
+    j = _section_heading_idx(last_span)
+    if j is not None:
+        sl = last_span.splitlines(keepends=True)
+        spans[-1] = (last_nid, "".join(sl[:j]))
+        tail = "".join(sl[j:])
+
+    if preamble + "".join(s for _, s in spans) + tail != content:
+        return None
+    return (preamble, spans, tail)
+
+
+def sort_overflow_by_id(content: str) -> tuple[str, bool, str]:
+    """Sort MIND_MAP_OVERFLOW.md `[N]` nodes into ascending numeric order.
+
+    Pure + fail-safe. Returns (new_content, changed, reason).
+
+    Contract:
+    - **Already sorted / unsortable / ambiguous → (content, False, reason)**: input
+      returned byte-for-byte; the caller must NOT rewrite (a sorted CRLF file is
+      never normalized).
+    - **Reordered → (new_content, True, "reordered N node(s)")**: node *bodies* and
+      the preamble + trailing section are preserved byte-for-byte; only the blank-line
+      separators BETWEEN nodes are canonicalized to the file's dominant separator.
+      Idempotent — re-running is a no-op.
+
+    Safety: fence-aware (a `[N]` line inside a ``` fence is not a node start); the
+    reordered output is re-parsed and must yield the same preamble, the same node-body
+    multiset, the same tail, and ascending ids — else it fails closed.
+    """
+    parsed = _partition_overflow(content)
+    if parsed is None:
+        return (content, False, "ambiguous/unparseable structure — left unchanged")
+    preamble, spans, tail = parsed
+    if len(spans) < 2:
+        return (content, False, "fewer than 2 nodes — nothing to sort")
+
+    ids = [nid for nid, _ in spans]
+    if ids == sorted(ids):
+        return (content, False, "already sorted")
+
+    sep = "\r\n\r\n" if "\r\n" in content else "\n\n"
+    ordered = sorted(spans, key=lambda t: t[0])        # stable: dup ids keep order
+    bodies = [s.rstrip("\r\n") for _, s in ordered]    # node text, sans trailing sep
+    new_content = sep.join(bodies)
+    if preamble:                                        # preserve preamble byte-exact
+        glue = "" if preamble.endswith(("\n", "\r")) else sep
+        new_content = preamble + glue + new_content
+    if tail:                                            # preserve tail byte-exact
+        new_content = new_content + sep + tail
+    if content.endswith("\r\n") and not new_content.endswith("\r\n"):
+        new_content += "\r\n"
+    elif content.endswith("\n") and not new_content.endswith("\n"):
+        new_content += "\n"
+
+    # REAL post-check: re-parse the output and compare structurally. Fail closed on
+    # any mismatch (catches separator collisions, lost bytes, mis-detached sections).
+    reparsed = _partition_overflow(new_content)
+    if reparsed is None:
+        return (content, False, "reordered output failed re-parse — left unchanged")
+    new_pre, new_spans, new_tail = reparsed
+    new_ids = [nid for nid, _ in new_spans]
+    if (new_pre == preamble and new_tail == tail and new_ids == sorted(ids)
+            and sorted(s.rstrip("\r\n") for _, s in new_spans) == sorted(bodies)):
+        return (new_content, True, f"reordered {len(ids)} node(s)")
+    return (content, False, "post-sort verification failed — left unchanged")
+
+
+def _scan_overflow_ids(content: str) -> tuple[list[int], bool, bool]:
+    """Fence-aware node-id scan. Returns (ids_in_file_order, in_fence_at_eof, ok)."""
+    import re
+
+    fence_re = re.compile(r"^\s*```")
+    head_re = re.compile(r"^\[(\d+)\]")
+    ids: list[int] = []
+    in_fence = False
+    for ln in content.splitlines(keepends=True):
+        if fence_re.match(ln):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            m = head_re.match(ln)
+            if m:
+                ids.append(int(m.group(1)))
+    return (ids, in_fence, not in_fence)
+
+
 def _prepare_merge_mindmap(project_path: Path, target: str, merge_base: str) -> None:
     import subprocess
     import re
@@ -2621,21 +2767,47 @@ def main():
         if broken:
             print(f"\nBroken cross-references: {broken}")
 
+        # Numeric-sort status, computed independently of drift/main_only so a
+        # complete-but-out-of-order overflow (the run-2 manual-reorder case) is
+        # reachable by --fix. Read newline-preserving (Path.open, not read_text's
+        # newline= kwarg which is Python ≥3.13 only) so a sorted CRLF file isn't
+        # flagged/rewritten.  NB: the sort path below is CRLF-safe; the drift/append
+        # branch still normalizes CRLF→LF via read_text (pre-existing — Parked P1).
+        with overflow_file.open(encoding="utf-8", newline="") as _f:
+            overflow_raw = _f.read()
+        _, sort_needed, sort_reason = sort_overflow_by_id(overflow_raw)
+        if sort_needed:
+            print(f"Overflow node order: out of numeric order → --fix will sort.")
+        elif sort_reason not in ("already sorted", "fewer than 2 nodes — nothing to sort"):
+            print(f"Overflow sort: skipped ({sort_reason}).")
+
         # --fix: copy main→overflow for EVERY drifted full node (any length sign,
-        # incl. same-length ref remaps) plus nodes missing from overflow.
-        if fix_mode and (drifted or main_only):
-            overflow_content = overflow_file.read_text(encoding="utf-8")
-            fixed = 0
-            for nid, _ in drifted:
-                old_text = overflow_nodes[nid]
-                new_text = main_nodes[nid]
-                overflow_content = overflow_content.replace(old_text, new_text)
-                fixed += 1
-            for nid in main_only:
-                overflow_content = overflow_content.rstrip() + "\n\n" + main_nodes[nid] + "\n"
-                fixed += 1
-            overflow_file.write_text(overflow_content, encoding="utf-8")
-            print(f"\nFixed: synced {fixed} node(s) main→overflow")
+        # incl. same-length ref remaps) plus nodes missing from overflow, THEN
+        # numerically sort the result (idempotent — appended nodes land in place).
+        if fix_mode and (drifted or main_only or sort_needed):
+            if drifted or main_only:
+                overflow_content = overflow_file.read_text(encoding="utf-8")
+                fixed = 0
+                for nid, _ in drifted:
+                    old_text = overflow_nodes[nid]
+                    new_text = main_nodes[nid]
+                    overflow_content = overflow_content.replace(old_text, new_text)
+                    fixed += 1
+                for nid in main_only:
+                    overflow_content = overflow_content.rstrip() + "\n\n" + main_nodes[nid] + "\n"
+                    fixed += 1
+            else:
+                overflow_content = overflow_raw   # sort-only: preserve newlines
+                fixed = 0
+            overflow_content, sort_changed, sort_msg = sort_overflow_by_id(overflow_content)
+            with overflow_file.open("w", encoding="utf-8", newline="") as _f:
+                _f.write(overflow_content)   # newline-preserving write (3.8-safe)
+            done = []
+            if fixed:
+                done.append(f"synced {fixed} node(s) main→overflow")
+            if sort_changed:
+                done.append(sort_msg)   # "reordered N node(s)"
+            print(f"\nFixed: {', '.join(done) if done else 'no change needed'}")
         elif drifted or main_only:
             fixable = len(drifted) + len(main_only)
             print(f"\n{fixable} node(s) can be auto-synced main→overflow. Run: tasks mindmap-sync --fix")

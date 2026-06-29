@@ -268,7 +268,12 @@ complementary pair — **neither replaces the other, and this one is not optiona
 3. Run `tasks mindmap-sync` **READ-ONLY** to preview, then **`tasks mindmap-sync
    --fix`** to write the mirrors + sync drift (gotcha #2: read-only first, never
    `--fix` on raw pre-renumber state). Narrow — don't overwrite — any stale
-   historical archive pointer (gotcha #7).
+   historical archive pointer (gotcha #7). **`--fix` also numerically sorts the
+   OVERFLOW nodes** (newly-archived nodes land in `[N]` order, not appended at EOF) —
+   so you no longer reorder the overflow by hand. The sort is byte-safe (node bodies
+   preserved, only inter-node separators canonicalized; already-sorted files are a
+   no-op) and distinct from gotcha #1's manual *renumber* (that's about MATCHING
+   numbers to MIND_MAP.md; this is just ordering).
 
 Skipping this step is the documented failure mode. Step 7's
 `ref-integrity --base` will HARD-FAIL if a new full node went unarchived — but
