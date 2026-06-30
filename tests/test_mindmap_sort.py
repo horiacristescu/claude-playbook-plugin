@@ -15,7 +15,10 @@ from pathlib import Path
 # Import the helper from the tasks package (cli.py guards its dispatch under __main__).
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent / "plugins/playbook"))
-from tasks.cli import sort_overflow_by_id, _scan_overflow_ids, _node_starts, _parse_nodes  # noqa: E402
+from tasks.cli import (  # noqa: E402
+    sort_overflow_by_id, _scan_overflow_ids, _node_starts, _parse_nodes,
+    _unnumbered_tail, _unnumbered_tail_notice,
+)
 
 
 class TestSortOverflow(unittest.TestCase):
@@ -383,6 +386,142 @@ class TestParseNodes(unittest.TestCase):
         # node definition here (intended, pre-existing behavior).
         self.assertEqual(_parse_nodes("[5]no-space\n"), {})
         self.assertEqual(sorted(_parse_nodes("[5] real node\n")), [5])
+
+
+class TestUnnumberedTailNotice(unittest.TestCase):
+    """task 008 — surface a stale heading-led unnumbered tail (round-3 regression).
+    NOTICE only; never auto-delete. Detector mirrors _extract_nodes' heading-trim."""
+
+    LEG = "## Legacy notes\n**X** — old.\n**Y** — old.\n"
+
+    # --- pure detector (_unnumbered_tail) ---
+    def test_detect_blank_preceded_heading(self):
+        c = "[1] a\n\n[2] b body\n\n" + self.LEG
+        self.assertTrue(_unnumbered_tail(c).startswith("## Legacy"))
+
+    def test_detect_glued_heading(self):
+        # heading glued to last node prose (NO blank line) — _partition_overflow.tail
+        # would MISS this; the detector must catch it (panel Critical).
+        c = "[1] a\n\n[2] b body\n## Legacy notes\nold\n"
+        self.assertTrue(_unnumbered_tail(c).startswith("## Legacy"))
+
+    def test_headingless_prose_not_detected(self):
+        # documented limitation: trailing prose with no heading is indistinguishable
+        # from the last node's body.
+        c = "[1] a\n\n[2] b body\nmore prose, no heading\n"
+        self.assertEqual(_unnumbered_tail(c), "")
+
+    def test_no_nodes_not_detected(self):
+        self.assertEqual(_unnumbered_tail("just preamble\nno nodes\n"), "")
+
+    def test_fenced_hash_not_detected(self):
+        # a `##` inside a code fence in the last node is not a section heading
+        c = "[1] a\n\n[2] b\n```\n## not a heading\n```\nend\n"
+        self.assertEqual(_unnumbered_tail(c), "")
+
+    # --- notice gating (_unnumbered_tail_notice) ---
+    def test_notice_fires_without_date(self):
+        c = "[1] a\n\n[2] b body\n\n" + self.LEG
+        self.assertIn("unnumbered line", _unnumbered_tail_notice(c))
+
+    def test_notice_silent_with_dated_keepnote(self):
+        c = "[1] a\n\n[2] b body\n\n## Legacy (kept 2026-06-30)\nold\n"
+        self.assertEqual(_unnumbered_tail_notice(c), "")
+
+    def test_incidental_body_date_does_not_suppress(self):
+        # W7 regression: the REAL round-3 block has "Created 2026-05-14" in its body
+        # and "kept for history" on the heading — neither line has BOTH keep/kept AND
+        # a date, so the notice MUST still fire (an incidental date is not a keep-note).
+        c = ("[40] x\n\n[41] y\n\n"
+             "## Legacy / unnumbered notes (superseded, kept for history)\n\n"
+             "**Project Initialize** — Created 2026-05-14: CLAUDE.md, MIND_MAP.md.\n")
+        self.assertIn("unnumbered line", _unnumbered_tail_notice(c))
+
+    def test_keepnote_own_line_suppresses(self):
+        # a deliberate keep-note as its own line under the heading also silences it.
+        c = ("[1] a\n\n[2] b body\n\n## Legacy notes\n"
+             "kept 2026-06-30 (intentionally retained per gotcha #7)\nold\n")
+        self.assertEqual(_unnumbered_tail_notice(c), "")
+
+    def test_substring_keepword_plus_date_does_not_suppress(self):
+        # impl-panel Critical: "keep" as a SUBSTRING of another word (bookkeeping,
+        # timekeeping, housekeeping, beekeeper) + a date on the same line must NOT
+        # false-suppress — only a whole-word keep/kept counts as an acknowledgement.
+        for stale in ("**Timekeeping log** — Created 2026-01-15: setup.",
+                      "**bookkeeping entry** 2024-03-03 reconciled.",
+                      "housekeeping notes 2025-01-01."):
+            c = f"[1] a\n\n[2] b body\n\n## Legacy notes\n{stale}\n"
+            self.assertIn("unnumbered line", _unnumbered_tail_notice(c),
+                          f"substring keep-word wrongly suppressed: {stale!r}")
+
+    def test_cli_crlf_tail_notice_and_preserves(self):
+        # impl-panel probe 6: CRLF overflow with a tail-only, --fix mode → notice
+        # fires, line endings + the Legacy block preserved byte-identical.
+        import tempfile
+        main = "[1] **a** body\n\n[2] **b** body\n"
+        ov = ("[1] **a** body\n\n[2] **b** body\n\n" + self.LEG)
+        ov_crlf = ov.replace("\n", "\r\n")
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, after = self._run(Path(d), main, ov_crlf, fix=True)
+        self.assertEqual(rc, 0)
+        self.assertIn("unnumbered line", out)
+        self.assertEqual(after, ov_crlf.encode("utf-8"))     # byte-identical, CRLF kept
+        self.assertNotIn(b"\r\r\n", after)
+
+    def test_notice_silent_without_tail(self):
+        self.assertEqual(_unnumbered_tail_notice("[1] a\n\n[2] b body\n"), "")
+
+    # --- end-to-end via the CLI, both modes ---
+    def _run(self, tmp, main, overflow, fix):
+        import os, subprocess
+        (tmp / ".agent" / "tasks").mkdir(parents=True, exist_ok=True)
+        (tmp / "MIND_MAP.md").write_text(main, encoding="utf-8")
+        (tmp / "MIND_MAP_OVERFLOW.md").write_bytes(overflow.encode("utf-8"))
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(_HERE.parent / "plugins/playbook")
+        args = [sys.executable, "-m", "tasks.cli", "mindmap-sync"] + (["--fix"] if fix else [])
+        r = subprocess.run(args, cwd=str(tmp), env=env, capture_output=True, text=True)
+        return r.returncode, r.stdout, (tmp / "MIND_MAP_OVERFLOW.md").read_bytes()
+
+    def test_cli_readonly_notice_with_tail(self):
+        import tempfile
+        main = "[1] **a** body\n\n[2] **b** body\n"
+        ov = "[1] **a** body\n\n[2] **b** body\n\n" + self.LEG
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run(Path(d), main, ov, fix=False)
+        self.assertEqual(rc, 0)
+        self.assertIn("unnumbered line", out)
+
+    def test_cli_readonly_silent_without_tail(self):
+        import tempfile
+        main = "[1] **a** body\n\n[2] **b** body\n"
+        ov = "[1] **a** body\n\n[2] **b** body\n"
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run(Path(d), main, ov, fix=False)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("unnumbered line", out)
+
+    def test_cli_fix_cleanfile_tailonly_notices_and_preserves(self):
+        # --fix on a fully-synced, sorted overflow whose ONLY extra is a tail:
+        # notice fires AND the file (incl. the Legacy block) is byte-identical.
+        import tempfile
+        main = "[1] **a** body\n\n[2] **b** body\n"
+        ov = "[1] **a** body\n\n[2] **b** body\n\n" + self.LEG
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, after = self._run(Path(d), main, ov, fix=True)
+        self.assertEqual(rc, 0)
+        self.assertIn("unnumbered line", out)
+        self.assertEqual(after, ov.encode("utf-8"))   # byte-identical: never deleted
+
+    def test_cli_fix_silent_with_dated_keepnote(self):
+        import tempfile
+        main = "[1] **a** body\n\n[2] **b** body\n"
+        ov = "[1] **a** body\n\n[2] **b** body\n\n## Legacy (kept 2026-06-30)\nold\n"
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, after = self._run(Path(d), main, ov, fix=True)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("unnumbered line", out)
+        self.assertEqual(after, ov.encode("utf-8"))
 
 
 if __name__ == "__main__":

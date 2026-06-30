@@ -274,6 +274,16 @@ complementary pair — **neither replaces the other, and this one is not optiona
    preserved, only inter-node separators canonicalized; already-sorted files are a
    no-op) and distinct from gotcha #1's manual *renumber* (that's about MATCHING
    numbers to MIND_MAP.md; this is just ordering).
+4. **If `mindmap-sync` prints a `Note: … unnumbered line(s) after the last
+   numbered node` warning**, the overflow has a heading-led section with no `[N]`
+   id (e.g. a stale `## Legacy` block) that the numbered-node + `ref-integrity`
+   checks can't see. Decide consciously: **remove** the superseded section, OR
+   **keep** it with a dated keep-note — the word `kept`/`keep` AND a `YYYY-MM-DD`
+   date on one line, e.g. `## Legacy … (kept 2026-06-30)` — which both honors
+   gotcha #7 (the historical archive is legitimate to keep) AND silences the notice
+   on future runs. (An incidental date in the stale prose does NOT silence it — the
+   keep-note must be deliberate.) Don't ignore it: a faithful run otherwise carries
+   stale scaffolding forward silently (the round-3 parity gap).
 
 Skipping this step is the documented failure mode. Step 7's
 `ref-integrity --base` will HARD-FAIL if a new full node went unarchived — but

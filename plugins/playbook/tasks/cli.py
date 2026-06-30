@@ -714,6 +714,72 @@ def _scan_overflow_ids(content: str) -> tuple[list[int], bool, bool]:
     return ([nid for _, nid in starts], in_fence, not in_fence)
 
 
+_HEADING_RE = re.compile(r"^#{1,6}\s")
+
+
+def _unnumbered_tail(content: str) -> str:
+    r"""Return the trailing unnumbered section after the LAST numbered `[N]` node —
+    i.e. the bytes `_extract_nodes` trims off the last node at its first markdown
+    heading — or "" if there is none.
+
+    This mirrors `_extract_nodes`' heading-trim (first non-fenced `^#{1,6}\s`
+    heading after the node's first line) applied to the LAST node's span, so the
+    notice and the drift diagnostics AGREE on what counts as node body. It catches
+    a `## Legacy`/scaffolding block whether the heading is blank-line-preceded OR
+    glued directly to the last node's prose. It deliberately does NOT use
+    `_partition_overflow` (whose `tail` only detaches at a blank-preceded heading),
+    so it never touches the `--fix` fail-closed path. Heading-led only: trailing
+    prose with no heading is indistinguishable from the node's own body and is not
+    reported. Read-only and side-effect-free."""
+    lines = content.splitlines(keepends=True)
+    starts, _ = _node_starts(lines)
+    if not starts:
+        return ""
+    span = lines[starts[-1][0]:]          # last [N] line → EOF
+    in_fence = False
+    for i in range(1, len(span)):
+        if _FENCE_RE.match(span[i]):
+            in_fence = not in_fence
+            continue
+        if not in_fence and _HEADING_RE.match(span[i]):
+            return "".join(span[i:])      # heading + everything after, byte-exact
+    return ""
+
+
+_DATE_TOKEN_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_KEEPWORD_RE = re.compile(r"\b(?:keep|kept)\b", re.IGNORECASE)
+
+
+def _is_keepnote_line(line: str) -> bool:
+    """A DELIBERATE keep-acknowledgement: the WHOLE WORD keep/kept AND a YYYY-MM-DD
+    date on the SAME line (e.g. "## Legacy (kept 2026-06-30)"). Requiring both on one
+    line distinguishes a conscious keep-note from an INCIDENTAL date in stale prose
+    (the round-3 block's "Created 2026-05-14" sits on a line with no keep/kept word).
+    The keep word is matched at WORD BOUNDARIES so "bookkeeping"/"timekeeping"/
+    "housekeeping"/"beekeeper" + a date do NOT false-suppress the notice."""
+    return _KEEPWORD_RE.search(line) is not None and _DATE_TOKEN_RE.search(line) is not None
+
+
+def _unnumbered_tail_notice(content: str) -> str:
+    """Operator-facing notice for a stale heading-led unnumbered tail (see
+    `_unnumbered_tail`), or "" when there is none OR it carries a deliberate dated
+    keep-note (gotcha #7's "keep with a dated note", which silences this to avoid
+    cry-wolf). The keep-note must be the word keep/kept AND a YYYY-MM-DD date on the
+    SAME line — an INCIDENTAL date in stale prose (the round-3 block's "Created
+    2026-05-14") must NOT suppress the notice. Module-level on purpose: the CLI
+    `main()` has a local `import re` in another command branch, so a bare `re` there
+    is an unbound local — keeping regex use out here avoids that and is testable."""
+    tail = _unnumbered_tail(content)
+    if not tail:
+        return ""
+    if any(_is_keepnote_line(ln) for ln in tail.splitlines()):
+        return ""
+    n = tail.strip("\r\n").count("\n") + 1
+    return (f"Note: {n} unnumbered line(s) after the last numbered node "
+            "(heading-led, e.g. ## Legacy) — review: remove the stale section, or "
+            "keep it with a dated note (`kept YYYY-MM-DD`) to acknowledge & silence.")
+
+
 def _parse_nodes(text: str) -> dict[int, str]:
     """node_id -> full raw body, for the git-merge collision detector
     (`_prepare_merge_mindmap`). Distinct from `_extract_nodes`/`_node_bodies`: it
@@ -2823,6 +2889,18 @@ def main():
             print(f"Overflow node order: out of numeric order → --fix will sort.")
         elif sort_reason not in ("already sorted", "fewer than 2 nodes — nothing to sort"):
             print(f"Overflow sort: skipped ({sort_reason}).")
+
+        # Unnumbered-tail notice (read-only, both modes): a heading-led section after
+        # the last numbered node (e.g. a stale `## Legacy` block) is invisible to the
+        # numbered-node diagnostics above AND to ref-integrity (id-keyed), so a
+        # faithful merge can silently retain it. Surface it for a conscious decision —
+        # but NEVER auto-delete (gotcha #7 permits keeping archive content; the
+        # detector is read-only and never touches the --fix write/fail-closed path).
+        # Computed before the --fix block so it fires in both modes; the helper is
+        # silent when there's no tail or it carries a dated keep-note (anti-cry-wolf).
+        _notice = _unnumbered_tail_notice(overflow_raw)
+        if _notice:
+            print(f"\n{_notice}")
 
         # --fix: copy main→overflow for EVERY drifted full node (any length sign,
         # incl. same-length ref remaps) plus nodes missing from overflow, THEN
