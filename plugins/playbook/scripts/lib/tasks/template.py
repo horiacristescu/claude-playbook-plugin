@@ -641,6 +641,7 @@ Commands:
                       Renumber tasks, re-sequence chat_log, report MIND_MAP collisions
                       so the branch merges cleanly into target (default: main)
   doctor              Harness health check
+  merge-doctor <src> [tgt]  Audit a cross-namespace merge for contamination
   bootstrap           Load mind map + skills + pending tasks
   init                Create CLAUDE.md for this project
 

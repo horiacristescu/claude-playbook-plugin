@@ -550,3 +550,329 @@ def task_status(project_path: Path) -> None:
         progress = _extract_progress(task_file)
 
         print(f"{name:<40} | {progress:<8} | {head}")
+
+
+# --------------------------------------------------------------------------
+# merge-doctor — mechanical contamination check for cross-namespace merges
+# --------------------------------------------------------------------------
+
+# Lines under this length are too noisy (empty, "ok", single punctuation) to
+# treat as evidence of contamination by themselves.
+_MERGE_DOCTOR_LINE_FLOOR = 4
+# Flag a per-user file when the *cumulative* non-whitespace bytes of foreign
+# lines clear this threshold — catches one long foreign line OR many short
+# ones (chat-log timestamps, M-tags, "tasks done" markers).
+_MERGE_DOCTOR_FOREIGN_BYTES_MIN = 20
+_MERGE_DOCTOR_MARKERS = ("<<<<<<", "=======", ">>>>>>")
+
+
+def _md_git(cmd: list[str], cwd: Path) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        ["git", *cmd],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _md_git_show(ref: str, path: str, cwd: Path) -> str | None:
+    rc, out, _ = _md_git(["show", f"{ref}:{path}"], cwd)
+    return out if rc == 0 else None
+
+
+def _md_user_dirs(ref: str, cwd: Path) -> set[str]:
+    """Names of .agent/<user>/ tree entries on <ref>."""
+    rc, out, _ = _md_git(
+        ["ls-tree", "-d", "--name-only", ref, ".agent/"], cwd
+    )
+    if rc != 0:
+        return set()
+    users: set[str] = set()
+    for line in out.splitlines():
+        line = line.strip().rstrip("/")
+        if not line:
+            continue
+        # entries look like ".agent/userA"
+        parts = line.split("/")
+        if len(parts) == 2 and parts[0] == ".agent" and parts[1]:
+            users.add(parts[1])
+    return users
+
+
+def _md_unmerged_paths(cwd: Path) -> set[str]:
+    """Paths git considers currently unmerged (active merge conflicts).
+
+    Parses `git ls-files --unmerged` output where each row is
+    `<mode> <hash> <stage>\\t<path>`. Splits on `\\t` to handle paths
+    containing spaces. Returns empty set if no merge is in progress.
+    """
+    rc, out, _ = _md_git(["ls-files", "--unmerged"], cwd)
+    if rc != 0:
+        return set()
+    paths: set[str] = set()
+    for line in out.splitlines():
+        if "\t" not in line:
+            continue
+        path = line.split("\t", 1)[1].strip()
+        if path:
+            paths.add(path)
+    return paths
+
+
+def _md_tracked(path: str, cwd: Path) -> bool:
+    """True iff <path> is currently tracked in the git index."""
+    rc, out, _ = _md_git(["ls-files", "--", path], cwd)
+    return rc == 0 and bool(out.strip())
+
+
+def _md_ignored(path: str, cwd: Path) -> bool:
+    """True iff <path> is covered by .gitignore.
+
+    `git check-ignore <path>` exits 0 when the path matches an ignore rule,
+    1 when it does not, and 128 on errors (bad path, not a git repo). Collapse
+    only exit 0 to True so transient errors don't mask findings.
+    """
+    rc, _, _ = _md_git(["check-ignore", "-q", path], cwd)
+    return rc == 0
+
+
+def _md_nontrivial(text: str) -> set[str]:
+    """Return the set of stripped lines >= LINE_FLOOR chars long.
+
+    The line floor screens out pure-noise lines (empty, single chars). The
+    real contamination threshold is checked per-comparison against
+    FOREIGN_BYTES_MIN on the *sum* of foreign-line lengths, so a single short
+    "tasks done" appearing on the wrong branch can still be detected if other
+    short foreign lines accompany it.
+    """
+    lines: set[str] = set()
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if len(stripped) >= _MERGE_DOCTOR_LINE_FLOOR:
+            lines.add(stripped)
+    return lines
+
+
+def run_merge_doctor(project_path: Path, source: str, target: str) -> int:
+    """Audit a merge for per-user cross-contamination and stranded markers.
+
+    Inspection contract:
+      - Working tree if a merge is in progress (.git/MERGE_HEAD present).
+      - Else the most recent merge commit reachable from HEAD.
+      - Neither → print "no merge state detected" and return 0.
+
+    Findings are classified into three buckets:
+      - actionable: real problems (contamination, tracked legacy paths,
+        stranded conflict markers). Counted toward exit code.
+      - expected: mid-merge surface that Step 5 of the skill will resolve
+        (conflict markers in files git lists as --unmerged).
+      - informational: pre-existing untracked files outside any user
+        namespace that aren't gitignored. Printed but not counted.
+
+    A fourth tier — untracked + gitignored — is suppressed entirely so the
+    user doesn't see the disk noise (.DS_Store, bash_history) they
+    explicitly named as annoying.
+
+    Returns len(actionable). Callers map >0 → exit code 1.
+    """
+    merge_head = project_path / ".git" / "MERGE_HEAD"
+    if merge_head.exists():
+        mid_merge = True
+        state = "mid-merge (working tree)"
+    else:
+        rc, out, _ = _md_git(
+            ["log", "--merges", "-n", "1", "--pretty=%H"], project_path
+        )
+        if rc == 0 and out.strip():
+            mid_merge = False
+            state = f"post-merge (commit {out.strip()[:8]})"
+        else:
+            print("no merge state detected")
+            return 0
+
+    print(f"merge-doctor: inspecting {state}")
+    print(f"  source ref: {source}")
+    print(f"  target ref: {target}")
+    print()
+
+    actionable: list[str] = []
+    expected: list[str] = []
+    informational: list[str] = []
+
+    # Paths git considers actively unmerged — only populated mid-merge.
+    # In post-merge mode this is empty by construction, which collapses
+    # the [EXPECTED] bucket so any surviving marker reports as actionable.
+    unmerged = _md_unmerged_paths(project_path) if mid_merge else set()
+
+    # 1. User detection (union of both sides)
+    src_users = _md_user_dirs(source, project_path)
+    tgt_users = _md_user_dirs(target, project_path)
+    all_users = src_users | tgt_users
+    print(f"detected user namespaces: {sorted(all_users) or '(none)'}")
+    if src_users != tgt_users:
+        if src_users - tgt_users:
+            print(f"  source-only: {sorted(src_users - tgt_users)}")
+        if tgt_users - src_users:
+            print(f"  target-only: {sorted(tgt_users - src_users)}")
+
+    # current_user marker cross-check — configuration error, always actionable
+    for ref, label in [(source, "source"), (target, "target")]:
+        marker = _md_git_show(ref, ".agent/current_user", project_path)
+        if marker is not None:
+            name = marker.strip()
+            if name and name not in all_users:
+                actionable.append(
+                    f"current_user marker on {label} '{ref}' is '{name}' "
+                    f"but no .agent/{name}/ directory exists on either side"
+                )
+    print()
+
+    # 2. Per-user cross-contamination + per-user marker scan
+    user_to_refs: dict[str, list[str]] = {}
+    for u in src_users:
+        user_to_refs.setdefault(u, []).append(source)
+    for u in tgt_users:
+        user_to_refs.setdefault(u, []).append(target)
+
+    reported_markers: set[str] = set()  # files whose conflict-marker finding
+                                        # is already classified; the global
+                                        # stranded scan skips these.
+    for user in sorted(all_users):
+        user_dir = project_path / ".agent" / user
+        if not user_dir.exists():
+            continue
+        for f in sorted(user_dir.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(project_path).as_posix()
+            try:
+                wt_text = f.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+
+            # First: per-user contamination check (always actionable when it
+            # fires — runs BEFORE marker classification so contamination on
+            # an unmerged file still wins over the "expected marker" bucket).
+            wt_lines = _md_nontrivial(wt_text)
+            contam_found = False
+            if wt_lines:
+                self_lines: set[str] = set()
+                for ref in user_to_refs.get(user, []):
+                    content = _md_git_show(ref, rel, project_path)
+                    if content is not None:
+                        self_lines |= _md_nontrivial(content)
+
+                parts = rel.split("/", 2)
+                rest = parts[2] if len(parts) >= 3 else None
+                if rest:
+                    for other in all_users - {user}:
+                        if contam_found:
+                            break
+                        for other_ref in user_to_refs.get(other, []):
+                            other_rel = f".agent/{other}/{rest}"
+                            other_content = _md_git_show(other_ref, other_rel, project_path)
+                            if other_content is None:
+                                continue
+                            other_lines = _md_nontrivial(other_content)
+                            foreign = (other_lines & wt_lines) - self_lines
+                            foreign_bytes = sum(len(line) for line in foreign)
+                            if foreign and foreign_bytes >= _MERGE_DOCTOR_FOREIGN_BYTES_MIN:
+                                sample = next(iter(foreign))
+                                snippet = sample if len(sample) <= 80 else sample[:77] + "..."
+                                actionable.append(
+                                    f"contamination: {rel} contains {len(foreign)} line(s) "
+                                    f"({foreign_bytes} bytes) from {other_ref}:{other_rel} "
+                                    f"— sample: {snippet}"
+                                )
+                                contam_found = True
+                                reported_markers.add(rel)
+                                break
+
+            # Then: marker classification. Skip if contamination already
+            # claimed the file (it's been added to reported_markers).
+            if not contam_found and any(m in wt_text for m in _MERGE_DOCTOR_MARKERS):
+                if mid_merge and rel in unmerged:
+                    expected.append(f"conflict markers in {rel} (active merge surface)")
+                else:
+                    actionable.append(f"stranded conflict markers in {rel}")
+                reported_markers.add(rel)
+
+    # 3. Global stranded marker scan, deduped against per-user findings
+    rc, out, _ = _md_git(
+        ["grep", "-l", "-e", "<<<<<<", "-e", ">>>>>>"], project_path
+    )
+    if rc == 0:
+        for line in out.splitlines():
+            line = line.strip()
+            if not line or line in reported_markers:
+                continue
+            if mid_merge and line in unmerged:
+                expected.append(f"conflict markers in {line} (active merge surface)")
+            else:
+                actionable.append(f"stranded conflict markers in {line}")
+
+    # 4. Legacy paths under .agent/ — three-way classify (suppress quiet noise)
+    # Recursive scan: real installs accumulate detritus deeper than the top
+    # level (.agent/cache/x, .agent/legacy/y). The `all_users` guard skips
+    # anything inside a per-user namespace — those files were already
+    # classified by the contamination scan above.
+    # `.agent/current_user` flows through standard classification: tracked →
+    # actionable (the install-day bug Step 6 of the skill fixes), ignored →
+    # suppressed, else → informational.
+    agent_dir = project_path / ".agent"
+    if agent_dir.exists():
+        for f in sorted(agent_dir.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(project_path).as_posix()
+            # Skip per-user-namespace files (handled by contamination scan).
+            # rel looks like ".agent/<first>/..." for nested paths.
+            parts = rel.split("/", 2)
+            if len(parts) >= 2 and parts[1] in all_users:
+                continue
+            if _md_tracked(rel, project_path):
+                actionable.append(
+                    f"legacy shared path tracked in git: {rel} "
+                    f"(needs `git rm --cached {rel}`)"
+                )
+            elif _md_ignored(rel, project_path):
+                # untracked AND gitignored: guaranteed never to enter a
+                # commit. Suppress entirely — this is the .DS_Store /
+                # bash_history noise the user explicitly named.
+                continue
+            else:
+                informational.append(
+                    f"untracked path outside any user namespace: {rel} "
+                    f"(could end up in a commit if `git add` is blind)"
+                )
+
+    # Print buckets in priority order
+    if actionable:
+        print("[ACTIONABLE] — fix before continuing:")
+        for item in actionable:
+            print(f"  {item}")
+        print()
+    if expected:
+        print("[EXPECTED] — mid-merge surface, Step 5 will resolve:")
+        for item in expected:
+            print(f"  {item}")
+        print()
+    if informational:
+        print("[INFORMATIONAL] — note, do not block:")
+        for item in informational:
+            print(f"  {item}")
+        print()
+    if not (actionable or expected or informational):
+        print("(no findings)")
+        print()
+
+    # Summary
+    verdict = "NEEDS ATTENTION" if actionable else "SAFE TO CONTINUE"
+    print(
+        f"merge-doctor: {len(actionable)} actionable, "
+        f"{len(expected)} expected, "
+        f"{len(informational)} informational — {verdict}"
+    )
+    return len(actionable)

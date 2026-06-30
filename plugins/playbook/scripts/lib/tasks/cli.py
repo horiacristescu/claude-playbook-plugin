@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_playbook_skill, resolve_session_id, resolve_agent_dir
+from tasks.core import create_task, list_tasks, task_status, PLAYBOOKS, _find_playbook_skill, resolve_session_id, resolve_agent_dir, run_merge_doctor
 
 
 def _state_file(project_path: Path) -> Path:
@@ -2481,6 +2481,21 @@ def main():
             print(f" ({failed} failed)")
         else:
             print()
+
+    elif cmd == "merge-doctor":
+        if not cmd_args:
+            print("Usage: tasks merge-doctor <source-branch> [target-branch]", file=sys.stderr)
+            print("  Audits a cross-namespace merge for per-user contamination,", file=sys.stderr)
+            print("  stranded conflict markers, and legacy .agent/ paths.", file=sys.stderr)
+            sys.exit(2)
+        source = cmd_args[0]
+        target = cmd_args[1] if len(cmd_args) > 1 else "main"
+        project_path = find_project_root()
+        if not (project_path / ".git").exists():
+            print(f"Error: not a git repository: {project_path}", file=sys.stderr)
+            sys.exit(2)
+        findings = run_merge_doctor(project_path, source, target)
+        sys.exit(1 if findings else 0)
 
     elif cmd == "mindmap-sync":
         import re as _re
